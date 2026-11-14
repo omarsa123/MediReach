@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../../core/constants/app_colors.dart';
 
 class PrimaryGradientButton extends StatelessWidget {
   const PrimaryGradientButton({
@@ -25,7 +24,7 @@ class PrimaryGradientButton extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: Color(0xFF059669).withOpacity(0.35),
+            color: const Color(0xFF059669).withValues(alpha: 0.35),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),

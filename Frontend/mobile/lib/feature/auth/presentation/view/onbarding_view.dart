@@ -59,6 +59,7 @@ class _OnbardingViewState extends State<OnbardingView> {
                 return;
               } else {
                 await sp!.setBool("isVisit", true);
+                if (!context.mounted) return;
                 Navigator.pushReplacementNamed(context, '/select_role');
               }
             },
@@ -112,6 +113,7 @@ class _OnbardingViewState extends State<OnbardingView> {
                     return;
                   } else {
                     await sp!.setBool("isVisit", true);
+                    if (!context.mounted) return;
                     Navigator.pushReplacementNamed(context, '/select_role');
                   }
                 }
