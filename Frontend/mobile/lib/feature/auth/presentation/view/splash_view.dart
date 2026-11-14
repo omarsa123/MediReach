@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:MediReach/core/constants/app_assets.dart';
 import 'package:MediReach/core/constants/app_fonts.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:MediReach/core/services/user_preferences.dart';
 
 class SplashView extends StatefulWidget {
   const SplashView({super.key});
@@ -13,25 +13,30 @@ class SplashView extends StatefulWidget {
 }
 
 class _SplashViewState extends State<SplashView> {
-  SharedPreferences? sp;
   @override
   void initState() {
     super.initState();
     navigateNext();
   }
 
-   Future<void> navigateNext() async {
+  Future<void> navigateNext() async {
     await Future.delayed(const Duration(seconds: 3));
 
-    final sp = await SharedPreferences.getInstance();
-    final isVisited = sp.getBool("isVisit") ?? false;
+    final isVisited = await UserPreferences.isVisited();
+    final savedRole = await UserPreferences.getRole();
 
     if (!mounted) return;
 
-    if (isVisited) {
-      Navigator.pushReplacementNamed(context, '/select_role');
-    } else {
+    if (!isVisited) {
       Navigator.pushReplacementNamed(context, '/onboarding');
+    } else if (savedRole != null) {
+      if (savedRole == 'provider' || savedRole == 'doctor') {
+        Navigator.pushReplacementNamed(context, '/doctor_login');
+      } else {
+        Navigator.pushReplacementNamed(context, '/patient_login');
+      }
+    } else {
+      Navigator.pushReplacementNamed(context, '/select_role');
     }
   }
 
@@ -42,18 +47,18 @@ class _SplashViewState extends State<SplashView> {
         decoration: BoxDecoration(
           image: DecorationImage(
             image: AssetImage("${AppAssets.imgPath}splash_background.png"),
-            fit: .cover,
+            fit: BoxFit.cover,
           ),
         ),
         height: double.infinity,
         width: double.infinity,
         child: Column(
-          mainAxisAlignment: .center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Image.asset("${AppAssets.imgPath}icon.png"),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8.0),
-              child: Text("MediReach", style: AppFonts.mainTitle),
+              child: Text("MedReach", style: AppFonts.mainTitle),
             ),
             Padding(
               padding: const EdgeInsets.only(top: 6.0, bottom: 14),

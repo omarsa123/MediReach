@@ -38,4 +38,13 @@ abstract final class AppColors {
   static const dashNavBorder = Color(0xFFE8F3F4);
   static const dashPending = Color(0xFFEAA52F);
 
+  // Auth Form
+  static const inputBackground = Color(0xFFF8FAFC);
+  static const inputBorder = Color(0xFFE2E8F0);
+  static const inputBorderFocused = Color(0xFF009794);
+  static const textMuted = Color(0xFF94A3B8);
+  static const textDark = Color(0xFF0F172A);
+  static const tealPrimary = Color(0xFF009794);
+  static const tealLight = Color(0xFFE6F7F6);
+  static const tealBadge = Color(0xFFE0F2F1);
 }

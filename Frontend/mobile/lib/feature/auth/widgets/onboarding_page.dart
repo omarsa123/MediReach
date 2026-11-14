@@ -17,7 +17,7 @@ class OnboardingPage extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16.0),
-            child: Image.asset("${AppAssets.imgPath}${imggName}" , width: 250,height: 250,),
+            child: Image.asset("${AppAssets.imgPath}$imggName" , width: 250,height: 250,),
           ),
           Text(title , style: AppFonts.mainTitle.copyWith(fontSize: 30), textAlign: .center,),
           Padding(
