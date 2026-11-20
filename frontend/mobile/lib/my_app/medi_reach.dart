@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
-import '/feature/auth/presentation/view/doctor_login_view.dart';
-import '/feature/auth/presentation/view/doctor_registration_view.dart';
-import '/feature/auth/presentation/view/email_verification_view.dart';
-import '/feature/auth/presentation/view/forgot_password_view.dart';
-import '/feature/auth/presentation/view/onbarding_view.dart';
-import '/feature/auth/presentation/view/patient_login_view.dart';
-import '/feature/auth/presentation/view/patient_registration_view.dart';
-import '/feature/auth/presentation/view/reset_password_view.dart';
-import '/feature/auth/presentation/view/select_role.dart';
-import '/feature/auth/presentation/view/splash_view.dart';
-import '/feature/doctor/presentation/view/doctor_dashboard_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/doctor_login_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/doctor_registration_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/email_verification_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/forgot_password_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/onbarding_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/patient_login_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/patient_registration_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/reset_password_view.dart';
+import 'package:MediReach/feature/auth/presentation/view/select_role.dart';
+import 'package:MediReach/feature/auth/presentation/view/splash_view.dart';
+import 'package:MediReach/feature/doctor/presentation/view/doctor_dashboard_view.dart';
 
 class Medireach extends StatelessWidget {
   const Medireach({super.key});

@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import '/core/constants/app_assets.dart';
-import '/core/constants/app_fonts.dart';
-import '/core/services/user_preferences.dart';
+import 'package:MediReach/core/constants/app_assets.dart';
+import 'package:MediReach/core/constants/app_fonts.dart';
+import 'package:MediReach/core/services/user_preferences.dart';
 
 class SplashView extends StatefulWidget {
   const SplashView({super.key});
