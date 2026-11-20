@@ -1,0 +1,43 @@
+### 1. Register New Patient
+POST http://localhost:5000/api/auth/register
+Content-Type: application/json
+
+{
+  "name": "Felobateer Wael",
+  "username": "felo_test1",
+  "email": "felo.test1@gmail.com",
+  "password": "Password123!",
+  "phone": "01012345678",
+  "address": "10th of Ramadan City",
+  "role": "patient",
+  "bloodType": "O_Positive"
+}
+
+### 2. Login
+POST http://localhost:5000/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "felo.test1@gmail.com",
+  "password": "Password123!"
+}
+
+### 3. Get Current User Profile (/me) - (هتاخد التوكن اللي هيطلعلك من الـ Login وتحطه هنا)
+GET http://localhost:5000/api/auth/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkNmYxZTlkZS05ZTQ3LTQzMjQtYTdkOC1jZmM2ZmFmMDk4MmMiLCJlbWFpbCI6ImZlbG8udGVzdDFAZ21haWwuY29tIiwiaWF0IjoxNzk1MTQwNTg4LCJleHAiOjE3OTUxNDQxODh9.2B4nOX-C7AkMnw5LSkRzy2PB2Wjcme4XaqskS0kSNkI
+### 4. Update Profile (/me)
+PATCH http://localhost:5000/api/auth/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkNmYxZTlkZS05ZTQ3LTQzMjQtYTdkOC1jZmM2ZmFmMDk4MmMiLCJlbWFpbCI6ImZlbG8udGVzdDFAZ21haWwuY29tIiwiaWF0IjoxNzk1MTQwNTg4LCJleHAiOjE3OTUxNDQxODh9.2B4nOX-C7AkMnw5LSkRzy2PB2Wjcme4XaqskS0kSNkI
+Content-Type: application/json
+
+{
+  "name": "Felobateer Wael Updated",
+  "phone": "01099998888"
+}
+
+### 5. Google Auth URL
+GET http://localhost:5000/api/auth/google-url
+
+### 6. Logout
+POST http://localhost:5000/api/auth/logout
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkNmYxZTlkZS05ZTQ3LTQzMjQtYTdkOC1jZmM2ZmFmMDk4MmMiLCJlbWFpbCI6ImZlbG8udGVzdDFAZ21haWwuY29tIiwiaWF0IjoxNzk1MTQwNTg4LCJleHAiOjE3OTUxNDQxODh9.2B4nOX-C7AkMnw5LSkRzy2PB2Wjcme4XaqskS0kSNkI
