@@ -1,4 +1,4 @@
-package com.example.mobile
+package com.medreach.medireach.medireach
 
 import io.flutter.embedding.android.FlutterActivity
 

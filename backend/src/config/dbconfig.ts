@@ -1,12 +1,13 @@
-import pkg from "pg";
+import { Pool } from "pg";
 import dotenv from "dotenv";
 
 dotenv.config();
-
-const { Pool } = pkg;
-
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("Missing DATABASE_URL in environment variables");
+}
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: databaseUrl,
   ssl: {
     rejectUnauthorized: false, // مطلوب مع Supabase
   },
@@ -20,8 +21,9 @@ export const connectDB = async (): Promise<void> => {
     const client = await pool.connect();
     console.log("Database connected successfully");
     client.release();
-  } catch (err: any) {
-    console.error(" Database connection error:", err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error(" Database connection error:", message);
     process.exit(1);
   }
 };
