@@ -1,0 +1,230 @@
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/network/api_exceptions.dart';
+import '../../data/auth_repository.dart';
+import 'auth_state.dart';
+
+class AuthCubit extends Cubit<AuthState> {
+  final AuthRepository _repo;
+
+  AuthCubit(this._repo) : super(AuthInitial());
+
+  /// Check whether an authenticated session exists (used by SplashView)
+  Future<void> restoreSession() async {
+    try {
+      final user = await _repo.restoreSession();
+      if (user != null) {
+        emit(AuthAuthenticated(user));
+      } else {
+        emit(const AuthUnauthenticated());
+      }
+    } catch (_) {
+      emit(const AuthUnauthenticated());
+    }
+  }
+
+  /// Login with role validation
+  Future<void> loginUser({
+    required String email,
+    required String password,
+    String? expectedRole,
+  }) async {
+    emit(const AuthLoading(message: 'Signing in...'));
+    try {
+      final user = await _repo.login(
+        email: email,
+        password: password,
+        expectedRole: expectedRole,
+      );
+      emit(AuthAuthenticated(user, message: 'Welcome back, ${user.name}!'));
+    } on EmailNotVerifiedException catch (e) {
+      emit(AuthEmailNotVerified(
+        email: e.email.isNotEmpty ? e.email : email.trim(),
+        message: e.message,
+      ));
+    } on RoleMismatchException catch (e) {
+      emit(AuthError(e.message, code: 'ROLE_MISMATCH'));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code, email: e.data?['email']?.toString()));
+    } catch (e) {
+      emit(AuthError('Login failed. Please try again.'));
+    }
+  }
+
+  /// Patient Registration
+  Future<void> registerPatient({
+    required String name,
+    required String email,
+    required String phone,
+    required String password,
+    String? username,
+    String? address,
+    String? bloodType,
+  }) async {
+    emit(const AuthLoading(message: 'Creating patient account...'));
+    try {
+      final user = await _repo.registerPatient(
+        name: name,
+        email: email,
+        phone: phone,
+        password: password,
+        username: username,
+        address: address,
+        bloodType: bloodType,
+      );
+      emit(AuthRegistrationSuccess(user: user, email: email));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (e) {
+      emit(const AuthError('Registration failed. Please try again.'));
+    }
+  }
+
+  /// Doctor / Provider Registration
+  Future<void> registerDoctor({
+    required String name,
+    required String email,
+    required String phone,
+    required String password,
+    required String specialization,
+    required String licenseNumber,
+    String? username,
+    String? address,
+  }) async {
+    emit(const AuthLoading(message: 'Creating doctor account...'));
+    try {
+      final user = await _repo.registerDoctor(
+        name: name,
+        email: email,
+        phone: phone,
+        password: password,
+        specialization: specialization,
+        licenseNumber: licenseNumber,
+        username: username,
+        address: address,
+      );
+      emit(AuthRegistrationSuccess(user: user, email: email));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (e) {
+      emit(const AuthError('Registration failed. Please try again.'));
+    }
+  }
+
+  /// Verify Email
+  Future<void> verifyEmail(String token) async {
+    emit(const AuthLoading(message: 'Verifying email...'));
+    try {
+      final res = await _repo.verifyEmail(token);
+      final msg = res['message']?.toString() ?? 'Email verified successfully!';
+      emit(AuthEmailVerificationSuccess(msg));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (e) {
+      emit(const AuthError('Verification failed. Please try again.'));
+    }
+  }
+
+  /// Resend Verification Email
+  Future<void> resendVerification(String email) async {
+    emit(const AuthLoading(message: 'Sending verification email...'));
+    try {
+      await _repo.resendVerification(email);
+      emit(AuthEmailResent(
+        email: email,
+        message: 'A verification link has been sent to $email.',
+      ));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (e) {
+      emit(const AuthError('Failed to send email. Please try again.'));
+    }
+  }
+
+  /// Forgot Password
+  Future<void> forgotPassword(String email) async {
+    emit(const AuthLoading(message: 'Sending reset instructions...'));
+    try {
+      await _repo.forgotPassword(email);
+      emit(AuthPasswordResetEmailSent(
+        email: email,
+        message: 'Password reset link sent! Please check your inbox.',
+      ));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (e) {
+      emit(const AuthError('Failed to send reset email. Please try again.'));
+    }
+  }
+
+  /// Reset Password
+  Future<void> resetPassword(String token, String newPassword) async {
+    emit(const AuthLoading(message: 'Resetting password...'));
+    try {
+      await _repo.resetPassword(token: token, newPassword: newPassword);
+      emit(const AuthPasswordResetSuccess('Password reset successfully! Please sign in.'));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (e) {
+      emit(AuthError('Password reset failed: ${e.toString()}'));
+    }
+  }
+
+  /// Logout
+  Future<void> logout() async {
+    emit(const AuthLoading(message: 'Signing out...'));
+    try {
+      await _repo.logout();
+      emit(const AuthUnauthenticated(message: 'Signed out successfully.'));
+    } catch (e) {
+      emit(AuthError('Logout error: ${e.toString()}'));
+    }
+  }
+
+  /// Reset error state back to initial
+  void clearError() {
+    if (state is AuthError) {
+      emit(AuthInitial());
+    }
+  }
+
+  // --- Legacy Compatibility Overloads ---
+  Future<void> login(String email, String password) async {
+    await loginUser(email: email, password: password);
+  }
+
+  Future<void> register(Map<String, dynamic> payload) async {
+    final role = payload['role']?.toString();
+    if (role == 'provider' || role == 'doctor') {
+      await registerDoctor(
+        name: payload['name']?.toString() ?? '',
+        email: payload['email']?.toString() ?? '',
+        phone: payload['phone']?.toString() ?? '',
+        password: payload['password']?.toString() ?? '',
+        specialization: payload['specialization']?.toString() ?? 'General Practitioner',
+        licenseNumber: payload['licenseNumber']?.toString() ?? '',
+      );
+    } else {
+      await registerPatient(
+        name: payload['name']?.toString() ?? '',
+        email: payload['email']?.toString() ?? '',
+        phone: payload['phone']?.toString() ?? '',
+        password: payload['password']?.toString() ?? '',
+        bloodType: payload['bloodType']?.toString(),
+      );
+    }
+  }
+}

@@ -109,19 +109,8 @@ export class AuthService {
 
     const tokens = generateLocalTokens(publicUser.userId, publicUser.email);
 
-    try {
-      const verificationToken = jwt.sign(
-        { userId: publicUser.userId },
-        getJwtSecret(),
-        { expiresIn: "1d" },
-      );
-      await EmailService.sendVerificationEmail(body.email, verificationToken);
-    } catch (emailError) {
-      console.error(
-        "⚠️ Warning: Failed to send verification email:",
-        emailError,
-      );
-    }
+    // ملاحظة: إيميل التفعيل مش بيتبعت تلقائي عند التسجيل
+    // بيتبعت فقط لما المستخدم يدوس على زرار Verify / Resend من شاشة التفعيل
 
     return {
       user: toPublicUser(publicUser),
@@ -215,7 +204,7 @@ export class AuthService {
 
     const redirectTo =
       process.env.PASSWORD_RESET_REDIRECT_URL ??
-      `${process.env.FRONTEND_URL}/auth/reset-password`;
+      `${process.env.FRONTEND_URL}/reset_password`;
 
     // توليد رابط استعادة من Supabase Admin وبعته من Gmail بتاعنا عبر EmailService
     const { data, error } = await supabaseAdmin.auth.admin.generateLink({

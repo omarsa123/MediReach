@@ -1,8 +1,12 @@
 import type { Request, Response } from "express";
 import { supabase, supabaseAdmin } from "../../config/subabase.js";
+import { pool } from "../../config/dbconfig.js";
 import { UserModel } from "../../modules/user/user.model.js";
 import { catchAsync } from "../../utils/catchAsync.js";
+import { EmailService } from "../../services/email.service.js";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
+
 /**
  * ==========================================
  * HELPER FUNCTIONS (دوّال مساعدة موحدة للردود)
@@ -10,27 +14,31 @@ import jwt from "jsonwebtoken";
  */
 
 // توحيد شكل استجابة النجاح (Success Response) في كل الـ APIs
-const successResponse = (data: any, message = "Success") => ({
+export const successResponse = (data: any, message = "Success") => ({
   success: true,
   message,
   data,
 });
 
 // توحيد شكل استجابة الخطأ (Error Response) مع إرفاق كود واضح للـ Frontend
-const errorResponse = (error: string, code = "ERROR") => ({
+export const errorResponse = (error: string, code = "ERROR") => ({
   success: false,
   error,
   code,
 });
 
 // تجهيز بيانات المستخدم العامّة لإرجاعها في الـ Response
-const toPublicUser = (user: any) => user;
+export const toPublicUser = (user: any) => {
+  if (!user) return null;
+  const { passwordHash, ...publicData } = user;
+  return publicData;
+};
 
-// تحويل بيانات الجلسة لـ Tokens (تعديل لإنشاء Access Token محلي)
-const generateLocalTokens = (
+// تحويل بيانات الجلسة لـ Tokens (تعديل لإنشاء Access Token و Refresh Token محلي/Supabase)
+export const generateLocalTokens = (
   userId: string,
   email: string,
-  refreshToken: string,
+  refreshToken?: string,
 ) => {
   const secret = process.env.JWT_SECRET || "your_fallback_secret_key";
   const accessToken = jwt.sign(
@@ -39,19 +47,27 @@ const generateLocalTokens = (
     { expiresIn: "1h" }, // مدة صلاحية التوكن ساعة
   );
 
+  const localRefreshToken =
+    refreshToken ||
+    jwt.sign(
+      { userId, email, type: "refresh" },
+      secret,
+      { expiresIn: "7d" },
+    );
+
   return {
     accessToken,
-    refreshToken,
+    refreshToken: localRefreshToken,
     expiresIn: 3600,
     tokenType: "bearer",
   };
 };
 
 // التحقق هل الخطأ القادم من قاعدة البيانات هو انتهاك لقيد فريد (Unique Constraint Violation - Duplicate Key)
-const isUniqueViolation = (err: any) => err?.code === "23505";
+export const isUniqueViolation = (err: any) => err?.code === "23505";
 
 // ترجمة أخطاء التكرار في قاعدة البيانات لرسائل واضحة يفهمها المستخدم
-const mapUniqueViolationMessage = (err: any) => {
+export const mapUniqueViolationMessage = (err: any) => {
   if (err?.detail?.includes("email")) return "This email is already registered";
   if (err?.detail?.includes("username"))
     return "This username is already taken";
@@ -68,13 +84,24 @@ const mapUniqueViolationMessage = (err: any) => {
 export class AuthController {
   /**
    * 1. Register User (تسجيل مستخدم جديد)
-   * - يفحص تكرار الإيميل ورقم الهاتف.
-   * - ينشئ حساباً في Supabase Auth (عن طريق الـ Admin).
-   * - ينشئ البروفايل والجداول المرتبطة (Patient/Provider/Org) في قاعدة البيانات المحلية.
    */
   static registerUser = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const body = req.body;
+
+      // توحيد الدور: doctor -> provider, organizer -> organization
+      let role = body.role || "patient";
+      if (role === "doctor") role = "provider";
+      if (role === "organizer") role = "organization";
+
+      // توليد اسم مستخدم تلقائي إذا لم يُرسل
+      let username = body.username;
+      if (!username || typeof username !== "string" || username.trim() === "") {
+        const base = (body.name || body.email?.split("@")[0] || "user")
+          .toLowerCase()
+          .replace(/[^a-z0-9_]/g, "");
+        username = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
+      }
 
       // فحص هل الإيميل مسجل مسبقاً في قاعدة البيانات
       if (await UserModel.isEmailTaken(body.email)) {
@@ -99,15 +126,15 @@ export class AuthController {
         return;
       }
 
-      // إنشاء المستخدم في نظام الـ Auth الخاص بـ Supabase مع تفعيل الحساب تلقائياً
+      // إنشاء المستخدم في نظام الـ Auth الخاص بـ Supabase
       const { data: authData, error: authError } =
         await supabaseAdmin.auth.admin.createUser({
           email: body.email,
           password: body.password,
-          email_confirm: true,
+          email_confirm: false, // لازم يفعّل الإيميل قبل ما يستخدم الحساب
           user_metadata: {
             name: body.name,
-            username: body.username,
+            username: username,
             phone: body.phone,
           },
         });
@@ -125,20 +152,29 @@ export class AuthController {
       }
 
       const userId = authData.user.id;
-      let publicUser;
+      let publicUser: any;
 
       // إنشاء السجلات المرتبطة في جدول User والجداول الفرعية داخل قاعدة البيانات
       try {
         publicUser = await UserModel.createFromAuth(userId, {
           name: body.name,
-          username: body.username,
+          username: username,
           email: body.email,
+          password: body.password,
           phone: body.phone,
           address: body.address,
-          role: body.role,
+          role: role,
+          birthDate: body.birthDate,
+          gender: body.gender,
+          bloodType: body.bloodType,
+          providerType: body.providerType || (role === "provider" ? "Doctor" : undefined),
+          specialization: body.specialization,
+          licenseNumber: body.licenseNumber,
+          organizationName: body.organizationName,
+          organizerType: body.organizerType,
+          licenseDocumentUrl: body.licenseDocumentUrl,
         });
       } catch (dbError) {
-        // لو حصل خطأ في قاعدة البيانات، نعمل Rollback بحذف المستخدم من سوبا بيز Auth لعدم حدوث تضارب
         await supabaseAdmin.auth.admin.deleteUser(userId);
 
         if (isUniqueViolation(dbError)) {
@@ -152,66 +188,80 @@ export class AuthController {
             );
           return;
         }
-        throw dbError; // الخطأ هيروح تلقائياً للـ Global Error Handler عبر catchAsync
+        throw dbError;
       }
 
-      // محاولة تسجيل الدخول تلقائياً بعد التسجيل لإصدار التوكنز للعميل
-      // محاولة تسجيل الدخول تلقائياً بعد التسجيل لإصدار التوكنز للعميل
-      const { data: signInData, error: signInError } =
-        await supabase.auth.signInWithPassword({
+      // ملاحظة: إيميل التفعيل مش بيتبعت تلقائي عند التسجيل
+      // بيتبعت فقط لما المستخدم يدوس على زرار Verify / Resend من شاشة التفعيل
+
+      // محاولة تسجيل الدخول لإصدار التوكنز
+      let refreshToken: string | undefined;
+      try {
+        const { data: signInData } = await supabase.auth.signInWithPassword({
           email: body.email,
           password: body.password,
         });
+        if (signInData?.session?.refresh_token) {
+          refreshToken = signInData.session.refresh_token;
+        }
+      } catch {}
 
-      if (signInError || !signInData.session || !signInData.user) {
-        res
-          .status(201)
-          .json(
-            successResponse(
-              { user: toPublicUser(publicUser) },
-              "Account created successfully. Please log in.",
-            ),
-          );
-        return;
-      }
+      const tokens = generateLocalTokens(
+        publicUser.userId,
+        publicUser.email,
+        refreshToken,
+      );
 
       res.status(201).json(
         successResponse(
           {
             user: toPublicUser(publicUser),
-            session: generateLocalTokens(
-              publicUser.userId,
-              publicUser.email,
-              signInData.session.refresh_token,
-            ),
+            session: tokens,
           },
-          "Account created and logged in successfully",
+          "Account created successfully",
         ),
       );
-      return;
     },
   );
 
   /**
    * 2. Login (تسجيل الدخول)
-   * - يتحقق من صحة البريد الإلكتروني وكلمة المرور عبر Supabase Auth.
-   * - يجلب بيانات البروفايل ويتحقق من حالة الحساب (Active).
    */
   static login = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const body = req.body;
+      let userId: string | null = null;
+      let supabaseRefreshToken: string | null = null;
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: body.email,
-        password: body.password,
-      });
+      // 1. فحص عبر Supabase Auth
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: body.email,
+          password: body.password,
+        });
+        if (!error && data.session && data.user) {
+          userId = data.user.id;
+          supabaseRefreshToken = data.session.refresh_token;
+        }
+      } catch {}
 
-      if (error || !data.session || !data.user) {
+      // 2. كبديل: فحص عبر قاعدة البيانات المحلية (Local bcrypt)
+      if (!userId) {
+        const localUser = await UserModel.findByEmail(body.email);
+        if (localUser && localUser.passwordHash) {
+          const isMatch = await bcrypt.compare(body.password, localUser.passwordHash);
+          if (isMatch) {
+            userId = localUser.userId;
+          }
+        }
+      }
+
+      if (!userId) {
         res
           .status(401)
           .json(
             errorResponse(
-              error?.message ?? "Invalid email or password",
+              "Invalid email or password",
               "INVALID_CREDENTIALS",
             ),
           );
@@ -219,7 +269,7 @@ export class AuthController {
       }
 
       // جلب البروفايل العام للمستخدم من قاعدة البيانات
-      const publicUser = await UserModel.findById(data.user.id);
+      const publicUser = await UserModel.findById(userId);
 
       if (!publicUser) {
         res
@@ -233,13 +283,25 @@ export class AuthController {
         return;
       }
 
-      // التحقق من أن الحساب نشط (Active)
-      if (publicUser.status !== "Active") {
+      // لو الإيميل لسه متفعّلش → نرجّع كود مخصوص عشان الفرونت يودّي لصفحة التفعيل
+      const status = (publicUser.status || "").toString();
+      if (status === "Pending" || status === "Unverified" || status === "pending") {
+        res.status(403).json({
+          success: false,
+          error:
+            "Please verify your email before signing in. Check your inbox or request a new link.",
+          code: "EMAIL_NOT_VERIFIED",
+          data: { email: publicUser.email },
+        });
+        return;
+      }
+
+      if (status !== "Active") {
         res
           .status(403)
           .json(
             errorResponse(
-              `Account is ${publicUser.status.toLowerCase()}. Contact support.`,
+              `Account is ${status.toLowerCase()}. Contact support.`,
               "ACCOUNT_INACTIVE",
             ),
           );
@@ -253,7 +315,7 @@ export class AuthController {
             session: generateLocalTokens(
               publicUser.userId,
               publicUser.email,
-              data.session.refresh_token,
+              supabaseRefreshToken ?? undefined,
             ),
           },
           "Logged in successfully",
@@ -264,20 +326,18 @@ export class AuthController {
 
   /**
    * 3. Logout (تسجيل الخروج)
-   * - ينهي الجلسة الحالية في سوبا بيز.
    */
   static logout = catchAsync(
-    async (req: Request, res: Response): Promise<void> => {
-      if ((req as any).accessToken) {
+    async (_req: Request, res: Response): Promise<void> => {
+      try {
         await supabase.auth.signOut();
-      }
+      } catch {}
       res.json(successResponse(null, "Logged out successfully"));
     },
   );
 
   /**
    * 4. Refresh Token (تجديد الجلسة)
-   * - يستقبل الـ Refresh Token ويُصدر Access Token جديد للمستخدم.
    */
   static refresh = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
@@ -292,6 +352,38 @@ export class AuthController {
         return;
       }
 
+      const secret = process.env.JWT_SECRET || "your_fallback_secret_key";
+
+      // 1. تجديد عبر Local JWT
+      try {
+        const payload = jwt.verify(refreshToken, secret) as { userId: string; email?: string };
+        if (payload && payload.userId) {
+          const publicUser = await UserModel.findById(payload.userId);
+          if (!publicUser || publicUser.status !== "Active") {
+            res.status(401).json(errorResponse("User not found or inactive", "USER_INACTIVE"));
+            return;
+          }
+
+          res.json(
+            successResponse(
+              {
+                user: toPublicUser(publicUser),
+                session: generateLocalTokens(
+                  publicUser.userId,
+                  publicUser.email,
+                  refreshToken,
+                ),
+              },
+              "Session refreshed",
+            ),
+          );
+          return;
+        }
+      } catch {
+        // ليس Local JWT صالح، التجربة عبر Supabase
+      }
+
+      // 2. تجديد عبر Supabase Auth
       const { data, error } = await supabase.auth.refreshSession({
         refresh_token: refreshToken,
       });
@@ -334,16 +426,30 @@ export class AuthController {
 
   /**
    * 5. Forgot Password (طلب استعادة كلمة المرور)
-   * - يرسل إيميل يحتوي على رابط إعادة تعيين كلمة المرور.
    */
   static forgotPassword = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const body = req.body;
-      const redirectTo =
-        process.env.PASSWORD_RESET_REDIRECT_URL ??
-        `${process.env.FRONTEND_URL}/auth/reset-password`;
+      const { email } = req.body;
+      if (!email) {
+        res.status(400).json(errorResponse("Email is required", "MISSING_EMAIL"));
+        return;
+      }
 
-      await supabase.auth.resetPasswordForEmail(body.email, { redirectTo });
+      const user = await UserModel.findByEmail(email);
+      if (user) {
+        const secret = process.env.JWT_SECRET || "your_fallback_secret_key";
+        const resetToken = jwt.sign(
+          { userId: user.userId, email: user.email, type: "password_reset" },
+          secret,
+          { expiresIn: "1h" },
+        );
+
+        try {
+          await EmailService.sendPasswordResetEmail(email, resetToken);
+        } catch (err) {
+          console.error("⚠️ Failed to send password reset email:", err);
+        }
+      }
 
       res.json(
         successResponse(
@@ -356,26 +462,66 @@ export class AuthController {
 
   /**
    * 6. Reset Password (تعيين كلمة مرور جديدة)
-   * - يستقبل التوكن المؤقت وكلمة المرور الجديدة لتحديثها.
    */
   static resetPassword = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const body = req.body;
-      const token = (req as any).accessToken;
+      const token =
+        req.body.token ||
+        (req.query.token as string) ||
+        (req.headers.authorization
+          ? req.headers.authorization.replace(/^Bearer\s+/i, "")
+          : null) ||
+        (req as any).accessToken;
+
+      const newPassword = req.body.password || req.body.newPassword;
 
       if (!token) {
         res
-          .status(401)
+          .status(400)
           .json(errorResponse("Recovery token is required", "MISSING_TOKEN"));
         return;
       }
 
-      const { error: setError } = await supabase.auth.setSession({
-        access_token: token,
-        refresh_token: req.body.refreshToken ?? "",
-      });
+      if (!newPassword) {
+        res
+          .status(400)
+          .json(errorResponse("New password is required", "MISSING_PASSWORD"));
+        return;
+      }
 
-      if (setError) {
+      const secret = process.env.JWT_SECRET || "your_fallback_secret_key";
+      let userId: string | null = null;
+
+      // 1. فك تشفير Local JWT
+      try {
+        const decoded: any = jwt.verify(token, secret);
+        userId = decoded.userId;
+      } catch {
+        // ليس Local JWT
+      }
+
+      if (userId) {
+        const passwordHash = await bcrypt.hash(newPassword, 10);
+        await UserModel.updatePasswordHash(userId, passwordHash);
+
+        try {
+          await supabaseAdmin.auth.admin.updateUserById(userId, {
+            password: newPassword,
+          });
+        } catch {}
+
+        res.json(successResponse(null, "Password has been reset successfully"));
+        return;
+      }
+
+      // 2. تجربة Supabase recovery session
+      const { data: sessionData, error: setError } =
+        await supabase.auth.setSession({
+          access_token: token,
+          refresh_token: req.body.refreshToken ?? "",
+        });
+
+      if (setError || !sessionData?.user) {
         res
           .status(401)
           .json(
@@ -387,8 +533,9 @@ export class AuthController {
         return;
       }
 
+      const sbUserId = sessionData.user.id;
       const { error: updateError } = await supabase.auth.updateUser({
-        password: body.password,
+        password: newPassword,
       });
 
       if (updateError) {
@@ -398,13 +545,210 @@ export class AuthController {
         return;
       }
 
+      const newPasswordHash = await bcrypt.hash(newPassword, 10);
+      await UserModel.updatePasswordHash(sbUserId, newPasswordHash);
+
       res.json(successResponse(null, "Password has been reset successfully"));
     },
   );
 
   /**
-   * 7. Me (جلب بيانات المستخدم الحالي)
-   * - يعيد بيانات المستخدم المسجل دخوله حالياً بناءً على الـ Middleware الخاص بالتوكن.
+   * 7. Verify Email (تأكيد البريد الإلكتروني)
+   */
+  static verifyEmail = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const token =
+        req.body.token ||
+        (req.query.token as string) ||
+        (req.headers.authorization
+          ? req.headers.authorization.replace(/^Bearer\s+/i, "")
+          : null);
+
+      if (!token) {
+        res
+          .status(400)
+          .json(errorResponse("Verification token is required", "MISSING_TOKEN"));
+        return;
+      }
+
+      const secret = process.env.JWT_SECRET || "your_fallback_secret_key";
+      let userId: string | null = null;
+
+      try {
+        const decoded: any = jwt.verify(token, secret);
+        userId = decoded.userId;
+      } catch {
+        res
+          .status(401)
+          .json(
+            errorResponse(
+              "Invalid or expired verification token",
+              "INVALID_TOKEN",
+            ),
+          );
+        return;
+      }
+
+      if (!userId) {
+        res
+          .status(400)
+          .json(errorResponse("Invalid token payload", "INVALID_TOKEN"));
+        return;
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query(
+          `UPDATE public."User" SET "status" = 'Active' WHERE "userId" = $1`,
+          [userId],
+        );
+        await client.query(
+          `UPDATE public."Provider" SET "verificationStatus" = 'Verified' WHERE "userId" = $1`,
+          [userId],
+        );
+      } finally {
+        client.release();
+      }
+
+      try {
+        await supabaseAdmin.auth.admin.updateUserById(userId, {
+          email_confirm: true,
+        });
+      } catch {}
+
+      const updatedUser = await UserModel.findById(userId);
+
+      res.json(
+        successResponse(
+          { user: toPublicUser(updatedUser), verified: true },
+          "Email verified successfully",
+        ),
+      );
+    },
+  );
+
+  /**
+   * 8. Open App from email link (HTTPS → deep link)
+   * GET /api/auth/open-app?type=verify|reset&token=...
+   * بتفتح من الإيميل وتوجّه المستخدم للتطبيق الموبايل
+   */
+  static openAppFromEmail = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const type = String(req.query.type || "verify");
+      const token = String(req.query.token || "");
+
+      if (!token) {
+        res
+          .status(400)
+          .send(
+            "<h2>Invalid link</h2><p>Missing token. Please request a new email.</p>",
+          );
+        return;
+      }
+
+      const scheme = (process.env.APP_DEEP_LINK_SCHEME || "medreach").replace(
+        /:\/\/$/,
+        "",
+      );
+      const path =
+        type === "reset" ? "reset_password" : "email_verification";
+      const deepLink = `${scheme}://${path}?token=${encodeURIComponent(token)}`;
+
+      // صفحة HTML بتحاول تفتح التطبيق + زر يدوي
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(`<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MedReach - Opening app...</title>
+  <style>
+    body { font-family: Arial, sans-serif; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; background:#f8fafc; color:#0f172a; }
+    .card { background:#fff; padding:28px 24px; border-radius:16px; box-shadow:0 8px 30px rgba(15,23,42,.08); max-width:420px; text-align:center; }
+    h1 { font-size:20px; margin:0 0 8px; }
+    p { color:#64748b; font-size:14px; line-height:1.5; }
+    a.btn { display:inline-block; margin-top:18px; background:#0d9488; color:#fff; text-decoration:none; padding:12px 22px; border-radius:10px; font-weight:700; }
+  </style>
+  <script>
+    // محاولة فتح التطبيق تلقائياً
+    window.location.href = ${JSON.stringify(deepLink)};
+    setTimeout(function() {
+      document.getElementById('fallback').style.display = 'block';
+    }, 1200);
+  </script>
+</head>
+<body>
+  <div class="card">
+    <h1>جاري فتح تطبيق MedReach...</h1>
+    <p>لو التطبيق ما اتفتحش تلقائي، اضغط الزر بالأسفل.</p>
+    <div id="fallback" style="display:none">
+      <a class="btn" href="${deepLink}">فتح التطبيق</a>
+      <p style="margin-top:16px;font-size:12px;word-break:break-all;color:#94a3b8">${deepLink}</p>
+    </div>
+  </div>
+</body>
+</html>`);
+    },
+  );
+
+  /**
+   * 9. Resend Verification Email (إعادة إرسال إيميل التفعيل)
+   */
+  static resendVerification = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const { email } = req.body;
+      if (!email) {
+        res.status(400).json(errorResponse("Email is required", "MISSING_EMAIL"));
+        return;
+      }
+
+      const user = await UserModel.findByEmail(email);
+      if (user) {
+        // لو الحساب متفعّل بالفعل
+        if (user.status === "Active") {
+          res.json(
+            successResponse(
+              null,
+              "This email is already verified. You can sign in.",
+            ),
+          );
+          return;
+        }
+
+        const secret = process.env.JWT_SECRET || "your_fallback_secret_key";
+        const verificationToken = jwt.sign(
+          { userId: user.userId, email: user.email },
+          secret,
+          { expiresIn: "1d" },
+        );
+
+        try {
+          await EmailService.sendVerificationEmail(email, verificationToken);
+        } catch (err) {
+          console.error("⚠️ Failed to resend verification email:", err);
+          res
+            .status(500)
+            .json(
+              errorResponse(
+                "Failed to send verification email. Please try again.",
+                "EMAIL_SEND_FAILED",
+              ),
+            );
+          return;
+        }
+      }
+
+      res.json(
+        successResponse(
+          null,
+          "If an account with that email exists, a verification link has been sent.",
+        ),
+      );
+    },
+  );
+
+  /**
+   * 9. Me (جلب بيانات المستخدم الحالي)
    */
   static me = catchAsync(async (req: Request, res: Response): Promise<void> => {
     const user = (req as any).user;
@@ -417,8 +761,7 @@ export class AuthController {
   });
 
   /**
-   * 8. Update Me (تحديث بيانات الملف الشخصي)
-   * - يسمح للمستخدم بتحديث بياناته (الاسم، العنوان، الهاتف، الخ) مع فحص التوافر.
+   * 10. Update Me (تحديث بيانات الملف الشخصي)
    */
   static updateMe = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
@@ -475,11 +818,10 @@ export class AuthController {
   );
 
   /**
-   * 9. Get Google Auth URL (توليد رابط تسجيل الدخول بجوجل)
-   * - يعيد للفرونت إند رابط التوجيه الخاص بـ Google OAuth.
+   * 11. Get Google Auth URL
    */
   static getGoogleAuthUrl = catchAsync(
-    async (req: Request, res: Response): Promise<void> => {
+    async (_req: Request, res: Response): Promise<void> => {
       const redirectTo =
         process.env.GOOGLE_REDIRECT_URL ??
         `${process.env.FRONTEND_URL}/auth/callback`;
@@ -514,8 +856,7 @@ export class AuthController {
   );
 
   /**
-   * 10. Google Callback (معالجة رجوع المستخدم من جوجل)
-   * - يتحقق من توكن جوجل، ولو المستخدم لأول مرة يسجل دخوله، ينشئ له بروفايل في قاعدة البيانات.
+   * 12. Google Callback
    */
   static googleCallback = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
@@ -546,7 +887,6 @@ export class AuthController {
       const supabaseUser = userData.user;
       let publicUser = await UserModel.findById(supabaseUser.id);
 
-      // أول مرة يسجل بجوجل -> يتم إنشاء بروفايل جديد له
       if (!publicUser) {
         const meta = supabaseUser.user_metadata ?? {};
         const email = supabaseUser.email ?? meta.email ?? "";
