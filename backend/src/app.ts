@@ -4,6 +4,7 @@ import helmet from "helmet";
 import dotenv from "dotenv";
 import { connectDB } from "./config/dbconfig.js";
 import { authRouter } from "./modules/authUser/auth.routes.js";
+import { userRouter } from "./modules/user/user.routes.js";
 
 dotenv.config();
 
@@ -36,6 +37,8 @@ app.get("/health", (_req, res) => {
 
 // بعد تعريف الـ app وتجهيز الـ express.json()
 app.use("/api/auth", authRouter);
+app.use("/api/user", userRouter);
+app.use("/api/users", userRouter);
 
 // ---------- 404 ----------
 app.use((_req, res) => {
@@ -67,7 +70,7 @@ app.use(
 const startServer = async () => {
   try {
     await connectDB();
-    app.listen(PORT, () => {
+    app.listen(PORT,'0.0.0.0', () => {
       console.log(`🚀 MedReach Auth server is running on port ${PORT}`);
       console.log(`   Environment: ${process.env.NODE_ENV ?? "development"}`);
       console.log(`   Auth base path: /api/auth`);

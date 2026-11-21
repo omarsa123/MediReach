@@ -13,7 +13,23 @@ Content-Type: application/json
   "bloodType": "O_Positive"
 }
 
-### 2. Login
+### 2. Register New Doctor
+POST http://localhost:5000/api/auth/register
+Content-Type: application/json
+
+{
+  "name": "Dr. Sarah Johnson",
+  "username": "dr_sarah",
+  "email": "sarah.doc@gmail.com",
+  "password": "Password123!",
+  "phone": "01098765432",
+  "role": "provider",
+  "providerType": "Doctor",
+  "specialization": "Cardiologist",
+  "licenseNumber": "DOC-123456"
+}
+
+### 3. Login
 POST http://localhost:5000/api/auth/login
 Content-Type: application/json
 
@@ -22,12 +38,58 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 3. Get Current User Profile (/me) - (هتاخد التوكن اللي هيطلعلك من الـ Login وتحطه هنا)
+### 4. Refresh Token
+POST http://localhost:5000/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "<REFRESH_TOKEN>"
+}
+
+### 5. Verify Email
+POST http://localhost:5000/api/auth/verify-email
+Content-Type: application/json
+
+{
+  "token": "<VERIFICATION_TOKEN>"
+}
+
+### 6. Resend Verification Email
+POST http://localhost:5000/api/auth/resend-verification
+Content-Type: application/json
+
+{
+  "email": "felo.test1@gmail.com"
+}
+
+### 7. Forgot Password
+POST http://localhost:5000/api/auth/forget-password
+Content-Type: application/json
+
+{
+  "email": "felo.test1@gmail.com"
+}
+
+### 8. Reset Password
+POST http://localhost:5000/api/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "<RESET_TOKEN>",
+  "password": "NewPassword123!"
+}
+
+### 9. Get Current User Profile (/api/auth/me)
 GET http://localhost:5000/api/auth/me
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkNmYxZTlkZS05ZTQ3LTQzMjQtYTdkOC1jZmM2ZmFmMDk4MmMiLCJlbWFpbCI6ImZlbG8udGVzdDFAZ21haWwuY29tIiwiaWF0IjoxNzk1MTQwNTg4LCJleHAiOjE3OTUxNDQxODh9.2B4nOX-C7AkMnw5LSkRzy2PB2Wjcme4XaqskS0kSNkI
-### 4. Update Profile (/me)
+Authorization: Bearer <ACCESS_TOKEN>
+
+### 10. Get User via Mounted User Router (/api/users/me)
+GET http://localhost:5000/api/users/me
+Authorization: Bearer <ACCESS_TOKEN>
+
+### 11. Update Profile (/api/auth/me)
 PATCH http://localhost:5000/api/auth/me
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkNmYxZTlkZS05ZTQ3LTQzMjQtYTdkOC1jZmM2ZmFmMDk4MmMiLCJlbWFpbCI6ImZlbG8udGVzdDFAZ21haWwuY29tIiwiaWF0IjoxNzk1MTQwNTg4LCJleHAiOjE3OTUxNDQxODh9.2B4nOX-C7AkMnw5LSkRzy2PB2Wjcme4XaqskS0kSNkI
+Authorization: Bearer <ACCESS_TOKEN>
 Content-Type: application/json
 
 {
@@ -35,9 +97,9 @@ Content-Type: application/json
   "phone": "01099998888"
 }
 
-### 5. Google Auth URL
+### 12. Google Auth URL
 GET http://localhost:5000/api/auth/google-url
 
-### 6. Logout
+### 13. Logout
 POST http://localhost:5000/api/auth/logout
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkNmYxZTlkZS05ZTQ3LTQzMjQtYTdkOC1jZmM2ZmFmMDk4MmMiLCJlbWFpbCI6ImZlbG8udGVzdDFAZ21haWwuY29tIiwiaWF0IjoxNzk1MTQwNTg4LCJleHAiOjE3OTUxNDQxODh9.2B4nOX-C7AkMnw5LSkRzy2PB2Wjcme4XaqskS0kSNkI
+Authorization: Bearer <ACCESS_TOKEN>

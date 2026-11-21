@@ -12,7 +12,7 @@ class DashboardHeader extends StatelessWidget {
     return Row(
       children: [
         Image.asset(
-          AppAssets.imgPath + "icon.png",
+          "${AppAssets.imgPath}icon.png",
           width: 24,
           height: 24,
           fit: BoxFit.contain,

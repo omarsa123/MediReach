@@ -1,0 +1,23 @@
+<!--
+  انسخ الجزء ده جوه <activity> الرئيسية (اللي فيها android.intent.action.MAIN)
+  في: android/app/src/main/AndroidManifest.xml
+-->
+
+<!-- Deep Link: medreach://email_verification?token=... و medreach://reset_password?token=... -->
+<intent-filter>
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="medreach" />
+</intent-filter>
+
+<!--
+  (اختياري) Universal Links / App Links لو عندك دومين:
+  <intent-filter android:autoVerify="true">
+      <action android:name="android.intent.action.VIEW" />
+      <category android:name="android.intent.category.DEFAULT" />
+      <category android:name="android.intent.category.BROWSABLE" />
+      <data android:scheme="https" android:host="yourdomain.com" android:pathPrefix="/email_verification" />
+      <data android:scheme="https" android:host="yourdomain.com" android:pathPrefix="/reset_password" />
+  </intent-filter>
+-->

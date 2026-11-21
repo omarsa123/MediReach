@@ -44,5 +44,9 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
+  },
+  "allowScripts": {
+    "bcrypt@6.0.0": true,
+    "esbuild@0.28.2": true
   }
 }

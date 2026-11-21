@@ -34,19 +34,25 @@ export interface UpdateProfileInput {
 
 export class UserModel {
   // متوافقة مع استدعاء الـ Controller القديم والجديد
-  static async createFromAuth(userId: string, data: RegisterInput) {
+  static async createFromAuth(
+    userId: string,
+    data: RegisterInput,
+    explicitPasswordHash?: string,
+  ) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const passwordHash = data.password
-        ? await bcrypt.hash(data.password, 10)
-        : await bcrypt.hash("OAUTH_USER_DEFAULT_PASS", 10);
+      const passwordHash = explicitPasswordHash
+        ? explicitPasswordHash
+        : data.password
+          ? await bcrypt.hash(data.password, 10)
+          : await bcrypt.hash("OAUTH_USER_DEFAULT_PASS", 10);
 
       const insertUser = await client.query(
         `INSERT INTO public."User"
           ("userId", "name", "username", "email", "passwordHash", "phone", "address", "status")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active')
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending')
          RETURNING
            "userId", "name", "username", "email", "phone",
            "address", "profilePictureUrl", "createdAt", "status"`,
@@ -146,7 +152,7 @@ export class UserModel {
     }
   }
 
-  // البحث بالـ ID
+  // البحث بالـ ID مع استرجاع الـ role والبيانات المرتبطة
   static async findById(userId: string) {
     const result = await pool.query(
       `SELECT
@@ -158,7 +164,38 @@ export class UserModel {
     );
 
     if (result.rows.length === 0) return null;
-    return result.rows[0];
+    const user = result.rows[0];
+
+    try {
+      const [patientRes, providerRes, orgRes, adminRes] = await Promise.all([
+        pool.query(`SELECT "bloodType" FROM public."Patient" WHERE "userId" = $1 LIMIT 1`, [userId]),
+        pool.query(`SELECT "providerType", "specialization", "licenseNumber" FROM public."Provider" WHERE "userId" = $1 LIMIT 1`, [userId]),
+        pool.query(`SELECT "organizationName", "organizerType" FROM public."Organization" WHERE "userId" = $1 LIMIT 1`, [userId]),
+        pool.query(`SELECT 1 FROM public."Admin" WHERE "userId" = $1 LIMIT 1`, [userId]),
+      ]);
+
+      if (providerRes.rows.length > 0) {
+        user.role = "provider";
+        user.specialization = providerRes.rows[0].specialization;
+        user.providerType = providerRes.rows[0].providerType;
+        user.licenseNumber = providerRes.rows[0].licenseNumber;
+      } else if (orgRes.rows.length > 0) {
+        user.role = "organization";
+        user.organizationName = orgRes.rows[0].organizationName;
+        user.organizerType = orgRes.rows[0].organizerType;
+      } else if (adminRes.rows.length > 0) {
+        user.role = "admin";
+      } else {
+        user.role = "patient";
+        if (patientRes.rows.length > 0) {
+          user.bloodType = patientRes.rows[0].bloodType;
+        }
+      }
+    } catch {
+      user.role = user.role || "patient";
+    }
+
+    return user;
   }
 
   // تحديث البروفايل
@@ -239,5 +276,37 @@ export class UserModel {
     const params = excludeUserId ? [phone, excludeUserId] : [phone];
     const res = await pool.query(query, params);
     return res.rows.length > 0;
+  }
+
+  static async findByEmail(email: string) {
+    const result = await pool.query(
+      `SELECT
+         "userId", "name", "username", "email", "phone", "passwordHash",
+         "address", "profilePictureUrl", "createdAt", "status"
+       FROM public."User"
+       WHERE "email" = $1`,
+      [email],
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0];
+  }
+
+  static async updatePasswordHash(userId: string, passwordHash: string): Promise<boolean> {
+    const result = await pool.query(
+      `UPDATE public."User"
+       SET "passwordHash" = $1
+       WHERE "userId" = $2
+       RETURNING "userId"`,
+      [passwordHash, userId],
+    );
+    return result.rows.length > 0;
+  }
+
+  static async deleteByEmail(email: string): Promise<boolean> {
+    const result = await pool.query(
+      `DELETE FROM public."User" WHERE "email" = $1 RETURNING "userId"`,
+      [email],
+    );
+    return result.rows.length > 0;
   }
 }
