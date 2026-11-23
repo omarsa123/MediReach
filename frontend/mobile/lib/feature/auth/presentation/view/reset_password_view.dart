@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
-import '../../../../core/utils/validators.dart';
+
 import '../../widgets/auth_app_bar.dart';
 import '../../widgets/auth_button.dart';
 import '../../widgets/auth_header.dart';
 import '../../widgets/auth_text_field.dart';
-import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
+import '../cubit/auth_cubit.dart';
 
 class ResetPasswordView extends StatefulWidget {
-  const ResetPasswordView({super.key, this.token});
+  const ResetPasswordView({super.key, this.email});
 
-  final String? token;
+  final String? email;
 
   @override
   State<ResetPasswordView> createState() => _ResetPasswordViewState();
@@ -20,23 +20,65 @@ class ResetPasswordView extends StatefulWidget {
 
 class _ResetPasswordViewState extends State<ResetPasswordView> {
   final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _otpController = TextEditingController();
   final _newPasswordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.email != null && widget.email!.isNotEmpty) {
+      _emailController.text = widget.email!;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // استقبال الإيميل لو تم تمريره عبر الـ route arguments
+    if (_emailController.text.isEmpty) {
+      final routeArgs = ModalRoute.of(context)?.settings.arguments;
+      if (routeArgs is Map<String, dynamic>) {
+        final routeEmail = routeArgs['email']?.toString();
+        if (routeEmail != null && routeEmail.isNotEmpty) {
+          _emailController.text = routeEmail;
+        }
+      } else if (routeArgs is String && routeArgs.contains('@')) {
+        _emailController.text = routeArgs;
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    _emailController.dispose();
+    _otpController.dispose();
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  void _onResetPassword(String effectiveToken) {
+  void _onResetPassword() {
     if (_formKey.currentState?.validate() ?? false) {
-      if (effectiveToken.isEmpty) {
-        // If no token in route, navigate to login with guidance
+      final email = _emailController.text.trim();
+      final otp = _otpController.text.trim();
+      final newPassword = _newPasswordController.text;
+
+      if (email.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Please click the reset password link sent to your email.'),
+            content: Text('Please enter your email address.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (otp.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter the verification code (OTP).'),
             backgroundColor: Colors.red,
           ),
         );
@@ -44,20 +86,15 @@ class _ResetPasswordViewState extends State<ResetPasswordView> {
       }
 
       context.read<AuthCubit>().resetPassword(
-            effectiveToken,
-            _newPasswordController.text,
-          );
+        email: email,
+        otp: otp,
+        newPassword: newPassword,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final routeArgs = ModalRoute.of(context)?.settings.arguments;
-    final routeToken = routeArgs is String
-        ? routeArgs
-        : (routeArgs is Map<String, dynamic> ? routeArgs['token']?.toString() : null);
-    final effectiveToken = widget.token ?? routeToken ?? '';
-
     return BlocConsumer<AuthCubit, AuthState>(
       listener: (context, state) {
         if (state is AuthPasswordResetSuccess) {
@@ -74,10 +111,7 @@ class _ResetPasswordViewState extends State<ResetPasswordView> {
           );
         } else if (state is AuthError) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red,
-            ),
+            SnackBar(content: Text(state.message), backgroundColor: Colors.red),
           );
         }
       },
@@ -86,9 +120,7 @@ class _ResetPasswordViewState extends State<ResetPasswordView> {
 
         return Scaffold(
           backgroundColor: Colors.white,
-          appBar: const AuthAppBar(
-            showTrailing: false,
-          ),
+          appBar: const AuthAppBar(showTrailing: false),
           body: SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -111,7 +143,7 @@ class _ResetPasswordViewState extends State<ResetPasswordView> {
                     ),
                     const SizedBox(height: 6),
                     const Text(
-                      'Your new password must be different from previously used passwords.',
+                      'Enter your email, the OTP code sent to your inbox, and your new password.',
                       style: TextStyle(
                         fontSize: 13,
                         color: AppColors.secondary,
@@ -120,6 +152,38 @@ class _ResetPasswordViewState extends State<ResetPasswordView> {
                       ),
                     ),
                     const SizedBox(height: 24),
+
+                    // حقل الإيميل
+                    AuthTextField(
+                      label: 'Email Address',
+                      hintText: 'Enter your email',
+                      controller: _emailController,
+                      prefixIcon: Icons.email_outlined,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty || !v.contains('@')) {
+                          return 'Please enter a valid email address';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // حقل إدخال الـ OTP
+                    AuthTextField(
+                      label: 'Verification Code (OTP)',
+                      hintText: 'Enter code from email',
+                      controller: _otpController,
+                      prefixIcon: Icons.lock_clock_outlined,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return 'Please enter the OTP code';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // حقل كلمة المرور الجديدة
                     AuthTextField(
                       label: 'New password',
                       hintText: 'Enter new password',
@@ -139,6 +203,8 @@ class _ResetPasswordViewState extends State<ResetPasswordView> {
                       },
                     ),
                     const SizedBox(height: 14),
+
+                    // حقل تأكيد كلمة المرور
                     AuthTextField(
                       label: 'Confirm password',
                       hintText: 'Confirm new password',
@@ -153,6 +219,7 @@ class _ResetPasswordViewState extends State<ResetPasswordView> {
                       },
                     ),
                     const SizedBox(height: 14),
+
                     const Padding(
                       padding: EdgeInsets.only(left: 4),
                       child: Column(
@@ -182,7 +249,7 @@ class _ResetPasswordViewState extends State<ResetPasswordView> {
                       label: 'Reset password',
                       showArrow: false,
                       isLoading: isLoading,
-                      onPressed: () => _onResetPassword(effectiveToken),
+                      onPressed: _onResetPassword,
                     ),
                     const SizedBox(height: 20),
                   ],

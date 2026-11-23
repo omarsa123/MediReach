@@ -1,6 +1,7 @@
 import '../../../core/network/api_exceptions.dart';
 import '../../../core/services/user_preferences.dart';
 import '../../../core/storage/token_storage.dart';
+
 import 'auth_remote_data_source.dart';
 import 'models/auth_session_model.dart';
 import 'models/user_model.dart';
@@ -13,10 +14,65 @@ class AuthRepository {
     AuthRemoteDataSource? remoteDataSource,
     TokenStorage? tokenStorage,
     String? baseUrl,
-  })  : _remoteDataSource = remoteDataSource ?? AuthRemoteDataSourceImpl(),
-        _tokenStorage = tokenStorage ?? TokenStorage();
+  }) : _remoteDataSource = remoteDataSource ?? AuthRemoteDataSourceImpl(),
+       _tokenStorage = tokenStorage ?? TokenStorage();
 
-  /// Login with email and password, with role validation
+  // ============================================================
+  // Helpers
+  // ============================================================
+
+  /// Normalize user roles.
+  String _normalizeRole(String role) {
+    final normalized = role.trim().toLowerCase();
+
+    switch (normalized) {
+      case 'doctor':
+        return 'provider';
+
+      case 'organizer':
+        return 'organization';
+
+      default:
+        return normalized;
+    }
+  }
+
+  /// Save authentication tokens.
+  Future<void> _saveSession(AuthSessionModel session) async {
+    await _tokenStorage.saveTokens(
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      tokenType: session.tokenType,
+    );
+  }
+
+  /// Save user information locally.
+  Future<void> _saveUserInfo(UserModel user) async {
+    await UserPreferences.saveRole(_normalizeRole(user.role));
+
+    await UserPreferences.saveUserInfo(
+      userId: user.userId,
+      name: user.name,
+      email: user.email,
+    );
+  }
+
+  /// Validate API authentication response.
+  void _validateAuthResponse(dynamic response, String defaultMessage) {
+    if (!response.success || response.user == null) {
+      throw ApiException(
+        message: response.message.isNotEmpty
+            ? response.message
+            : defaultMessage,
+      );
+    }
+  }
+
+  // ============================================================
+  // Login
+  // ============================================================
+
+  /// Login with email and password.
   Future<UserModel> login({
     required String email,
     required String password,
@@ -24,61 +80,64 @@ class AuthRepository {
   }) async {
     final response = await _remoteDataSource.login(email.trim(), password);
 
-    if (!response.success || response.user == null) {
-      throw ApiException(message: response.message.isNotEmpty ? response.message : 'Login failed');
-    }
+    _validateAuthResponse(response, 'Login failed');
 
     final user = response.user!;
 
-    // Role mapping: doctor -> provider
-    final normalizedExpected = (expectedRole == 'doctor' ? 'provider' : expectedRole)?.toLowerCase();
-    final normalizedActual = (user.role == 'doctor' ? 'provider' : user.role).toLowerCase();
+    final normalizedActual = _normalizeRole(user.role);
 
-    if (normalizedExpected != null && normalizedExpected.isNotEmpty) {
-      if (normalizedActual != normalizedExpected) {
-        if (normalizedActual == 'provider' && normalizedExpected == 'patient') {
-          throw const RoleMismatchException(
-            message: 'This account is registered as a healthcare provider. Please sign in through the Doctor login screen.',
-            expectedRole: 'patient',
-            actualRole: 'provider',
-          );
-        } else if (normalizedActual == 'patient' && normalizedExpected == 'provider') {
-          throw const RoleMismatchException(
-            message: 'This account is registered as a patient. Please sign in through the Patient login screen.',
-            expectedRole: 'provider',
-            actualRole: 'patient',
-          );
-        } else {
-          throw RoleMismatchException(
-            message: 'Access denied: role mismatch. Expected $expectedRole but got ${user.role}.',
-            expectedRole: expectedRole!,
-            actualRole: user.role,
-          );
-        }
+    final normalizedExpected = expectedRole == null
+        ? null
+        : _normalizeRole(expectedRole);
+
+    // Validate expected account role.
+    if (normalizedExpected != null &&
+        normalizedExpected.isNotEmpty &&
+        normalizedActual != normalizedExpected) {
+      if (normalizedActual == 'provider' && normalizedExpected == 'patient') {
+        throw const RoleMismatchException(
+          message:
+              'This account is registered as a healthcare provider. '
+              'Please sign in through the Doctor login screen.',
+          expectedRole: 'patient',
+          actualRole: 'provider',
+        );
       }
-    }
 
-    // Persist tokens
-    if (response.session != null) {
-      await _tokenStorage.saveTokens(
-        accessToken: response.session!.accessToken,
-        refreshToken: response.session!.refreshToken,
-        tokenType: response.session!.tokenType,
+      if (normalizedActual == 'patient' && normalizedExpected == 'provider') {
+        throw const RoleMismatchException(
+          message:
+              'This account is registered as a patient. '
+              'Please sign in through the Patient login screen.',
+          expectedRole: 'provider',
+          actualRole: 'patient',
+        );
+      }
+
+      throw RoleMismatchException(
+        message:
+            'Access denied: role mismatch. '
+            'Expected $normalizedExpected but got $normalizedActual.',
+        expectedRole: normalizedExpected,
+        actualRole: normalizedActual,
       );
     }
 
-    // Persist user role and basic info
-    await UserPreferences.saveRole(user.role);
-    await UserPreferences.saveUserInfo(
-      userId: user.userId,
-      name: user.name,
-      email: user.email,
-    );
+    // Save session only after role validation.
+    if (response.session != null) {
+      await _saveSession(response.session!);
+    }
+
+    await _saveUserInfo(user);
 
     return user;
   }
 
-  /// Register patient
+  // ============================================================
+  // Registration
+  // ============================================================
+
+  /// Register a new patient.
   Future<UserModel> registerPatient({
     required String name,
     required String email,
@@ -94,37 +153,30 @@ class AuthRepository {
       'phone': phone.trim(),
       'password': password,
       'role': 'patient',
-      if (username != null && username.isNotEmpty) 'username': username.trim(),
-      if (address != null && address.isNotEmpty) 'address': address.trim(),
-      if (bloodType != null && bloodType.isNotEmpty) 'bloodType': bloodType,
+      if (username != null && username.trim().isNotEmpty)
+        'username': username.trim(),
+      if (address != null && address.trim().isNotEmpty)
+        'address': address.trim(),
+      if (bloodType != null && bloodType.trim().isNotEmpty)
+        'bloodType': bloodType.trim(),
     };
 
     final response = await _remoteDataSource.register(payload);
-    if (!response.success || response.user == null) {
-      throw ApiException(message: response.message.isNotEmpty ? response.message : 'Registration failed');
-    }
+
+    _validateAuthResponse(response, 'Registration failed');
 
     final user = response.user!;
 
     if (response.session != null) {
-      await _tokenStorage.saveTokens(
-        accessToken: response.session!.accessToken,
-        refreshToken: response.session!.refreshToken,
-        tokenType: response.session!.tokenType,
-      );
+      await _saveSession(response.session!);
     }
 
-    await UserPreferences.saveRole('patient');
-    await UserPreferences.saveUserInfo(
-      userId: user.userId,
-      name: user.name,
-      email: user.email,
-    );
+    await _saveUserInfo(user);
 
     return user;
   }
 
-  /// Register doctor / provider
+  /// Register a new doctor / healthcare provider.
   Future<UserModel> registerDoctor({
     required String name,
     required String email,
@@ -144,144 +196,177 @@ class AuthRepository {
       'providerType': 'Doctor',
       'specialization': specialization.trim(),
       'licenseNumber': licenseNumber.trim(),
-      if (username != null && username.isNotEmpty) 'username': username.trim(),
-      if (address != null && address.isNotEmpty) 'address': address.trim(),
+      if (username != null && username.trim().isNotEmpty)
+        'username': username.trim(),
+      if (address != null && address.trim().isNotEmpty)
+        'address': address.trim(),
     };
 
     final response = await _remoteDataSource.register(payload);
-    if (!response.success || response.user == null) {
-      throw ApiException(message: response.message.isNotEmpty ? response.message : 'Registration failed');
-    }
+
+    _validateAuthResponse(response, 'Registration failed');
 
     final user = response.user!;
 
     if (response.session != null) {
-      await _tokenStorage.saveTokens(
-        accessToken: response.session!.accessToken,
-        refreshToken: response.session!.refreshToken,
-        tokenType: response.session!.tokenType,
-      );
+      await _saveSession(response.session!);
     }
 
-    await UserPreferences.saveRole('provider');
-    await UserPreferences.saveUserInfo(
-      userId: user.userId,
-      name: user.name,
-      email: user.email,
-    );
+    await _saveUserInfo(user);
 
     return user;
   }
 
-  /// Restore active session on app startup
+  // ============================================================
+  // Session Management
+  // ============================================================
+
+  /// Restore active session when application starts.
   Future<UserModel?> restoreSession() async {
     final hasTokens = await _tokenStorage.hasTokens();
+
     if (!hasTokens) return null;
 
     final accessToken = await _tokenStorage.getAccessToken();
-    if (accessToken == null || accessToken.isEmpty) return null;
 
-    try {
-      final user = await _remoteDataSource.getMe(accessToken);
-      await UserPreferences.saveRole(user.role);
-      await UserPreferences.saveUserInfo(
-        userId: user.userId,
-        name: user.name,
-        email: user.email,
-      );
-      return user;
-    } on UnauthorizedException {
-      // Access token might be expired, attempt to refresh
-      try {
-        final newSession = await refreshToken();
-        if (newSession != null) {
-          final user = await _remoteDataSource.getMe(newSession.accessToken);
-          await UserPreferences.saveRole(user.role);
-          await UserPreferences.saveUserInfo(
-            userId: user.userId,
-            name: user.name,
-            email: user.email,
-          );
-          return user;
-        }
-      } catch (_) {
-        await logout();
-      }
-    } catch (_) {
-      // Network or other temporary error: do not clear tokens prematurely
-    }
-    return null;
-  }
-
-  /// Refresh session using stored refresh token
-  Future<AuthSessionModel?> refreshToken() async {
-    final refreshToken = await _tokenStorage.getRefreshToken();
-    if (refreshToken == null || refreshToken.isEmpty) {
+    if (accessToken == null || accessToken.isEmpty) {
       return null;
     }
 
-    final response = await _remoteDataSource.refresh(refreshToken);
-    if (response.session != null) {
-      await _tokenStorage.saveTokens(
-        accessToken: response.session!.accessToken,
-        refreshToken: response.session!.refreshToken,
-        tokenType: response.session!.tokenType,
-      );
-      return response.session;
+    try {
+      final user = await _remoteDataSource.getMe(accessToken);
+
+      await _saveUserInfo(user);
+
+      return user;
+    } on UnauthorizedException {
+      // Access token may have expired.
+      try {
+        final newSession = await refreshToken();
+
+        if (newSession == null) {
+          await logout();
+          return null;
+        }
+
+        final user = await _remoteDataSource.getMe(newSession.accessToken);
+
+        await _saveUserInfo(user);
+
+        return user;
+      } catch (_) {
+        await logout();
+        return null;
+      }
+    } catch (_) {
+      // Preserve tokens on temporary network errors.
+      return null;
     }
-    return null;
   }
 
-  /// Logout and clear stored tokens & preferences
+  /// Refresh authentication session.
+  Future<AuthSessionModel?> refreshToken() async {
+    final storedRefreshToken = await _tokenStorage.getRefreshToken();
+
+    if (storedRefreshToken == null || storedRefreshToken.isEmpty) {
+      return null;
+    }
+
+    final response = await _remoteDataSource.refresh(storedRefreshToken);
+
+    if (!response.success || response.session == null) {
+      return null;
+    }
+
+    await _saveSession(response.session!);
+
+    return response.session;
+  }
+
+  /// Logout and clear local session.
   Future<void> logout() async {
     try {
       final accessToken = await _tokenStorage.getAccessToken();
+
       await _remoteDataSource.logout(accessToken);
     } catch (_) {
-      // Ignore network errors on logout to ensure local cleanup succeeds
+      // Local cleanup must always happen.
     } finally {
       await _tokenStorage.clearTokens();
       await UserPreferences.clearUserInfo();
     }
   }
 
-  /// Request password reset link
-  Future<void> forgotPassword(String email) async {
-    await _remoteDataSource.forgotPassword(email.trim());
+  // ============================================================
+  // Email Verification
+  // ============================================================
+
+  /// Verify email using OTP.
+  Future<void> verifyEmail({required String email, required String otp}) async {
+    await _remoteDataSource.verifyEmail(email: email.trim(), otp: otp.trim());
   }
 
-  /// Reset password using recovery token
-  Future<void> resetPassword({
-    required String token,
-    required String newPassword,
-  }) async {
-    await _remoteDataSource.resetPassword(token.trim(), newPassword);
-  }
-
-  /// Verify email with verification token
-  Future<Map<String, dynamic>> verifyEmail(String token) async {
-    return await _remoteDataSource.verifyEmail(token.trim());
-  }
-
-  /// Resend verification email
+  /// Resend verification email.
   Future<void> resendVerification(String email) async {
     await _remoteDataSource.resendVerification(email.trim());
   }
 
-  /// Raw / legacy helper methods for backward compatibility
-  Future<Map<String, dynamic>> loginLegacy(String email, String password) async {
+  // ============================================================
+  // Google OAuth
+  // ============================================================
+
+  Future<String> getGoogleAuthUrl() => _remoteDataSource.getGoogleAuthUrl();
+
+  // ============================================================
+  // Password Recovery
+  // ============================================================
+
+  /// Request password recovery email.
+  Future<void> forgotPassword(String email) async {
+    await _remoteDataSource.forgotPassword(email.trim());
+  }
+
+  /// Reset password using email and OTP.
+  Future<void> resetPassword({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
+    await _remoteDataSource.resetPassword(
+      email: email.trim(),
+      otp: otp.trim(),
+      newPassword: newPassword,
+    );
+  }
+
+  // ============================================================
+  // Legacy Compatibility
+  // ============================================================
+
+  /// Legacy login helper.
+  Future<Map<String, dynamic>> loginLegacy(
+    String email,
+    String password,
+  ) async {
     try {
       final user = await login(email: email, password: password);
+
       return {'user': user.toJson()};
     } on ApiException catch (e) {
       return {'error': e.message};
     }
   }
 
-  Future<Map<String, dynamic>> registerLegacy(Map<String, dynamic> payload) async {
+  /// Legacy registration helper.
+  Future<Map<String, dynamic>> registerLegacy(
+    Map<String, dynamic> payload,
+  ) async {
     try {
       final response = await _remoteDataSource.register(payload);
-      return {'user': response.user?.toJson()};
+
+      _validateAuthResponse(response, 'Registration failed');
+
+      return {'user': response.user!.toJson()};
     } on ApiException catch (e) {
       return {'error': e.message};
     }

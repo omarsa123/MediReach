@@ -5,9 +5,9 @@ import 'package:flutter/foundation.dart';
 /// خدمة التعامل مع Deep Links من الإيميل (verification / reset password)
 ///
 /// الصيغ المدعومة:
-/// - medreach://email_verification?token=xxx
-/// - medreach://reset_password?token=xxx
-/// - https://yourdomain.com/email_verification?token=xxx  (لو Universal Links)
+/// - medreach://email_verification?email=xxx&otp=123456
+/// - medreach://reset_password?email=xxx&otp=123456
+/// - https://yourdomain.com/api/v1/auth/open-app?type=verify&email=...&otp=...
 class DeepLinkService {
   DeepLinkService._();
   static final DeepLinkService instance = DeepLinkService._();
@@ -48,13 +48,12 @@ class DeepLinkService {
   }
 
   /// تحويل الـ Uri لمسار التطبيق + arguments
-  /// بيرجع null لو اللينك مش تابع للتطبيق
   static DeepLinkRoute? parse(Uri uri) {
-    // scheme مخصص: medreach://email_verification?token=...
-    // أو https:   https://host/email_verification?token=...
     final path = _extractPath(uri);
-    final token = uri.queryParameters['token'];
     final email = uri.queryParameters['email'];
+    final otp = uri.queryParameters['otp'];
+    // دعم قديم لو لسه في token
+    final token = uri.queryParameters['token'];
 
     if (path == null) return null;
 
@@ -62,8 +61,9 @@ class DeepLinkService {
       return DeepLinkRoute(
         routeName: '/email_verification',
         arguments: {
-          if (token != null && token.isNotEmpty) 'token': token,
           if (email != null && email.isNotEmpty) 'email': email,
+          if (otp != null && otp.isNotEmpty) 'otp': otp,
+          if (token != null && token.isNotEmpty) 'token': token,
         },
       );
     }
@@ -72,6 +72,8 @@ class DeepLinkService {
       return DeepLinkRoute(
         routeName: '/reset_password',
         arguments: {
+          if (email != null && email.isNotEmpty) 'email': email,
+          if (otp != null && otp.isNotEmpty) 'otp': otp,
           if (token != null && token.isNotEmpty) 'token': token,
         },
       );
@@ -81,8 +83,7 @@ class DeepLinkService {
   }
 
   static String? _extractPath(Uri uri) {
-    // medreach://email_verification?token=...
-    // → host = email_verification, path = /
+    // medreach://email_verification?email=...
     if (uri.scheme == 'medreach') {
       final host = uri.host;
       if (host.isNotEmpty) return host;
@@ -91,8 +92,7 @@ class DeepLinkService {
       return null;
     }
 
-    // https://example.com/email_verification?token=...
-    // أو https://example.com/auth/verify-email?token=...
+    // https://example.com/email_verification?...
     final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
     if (segments.isEmpty) return null;
     return segments.join('/');
