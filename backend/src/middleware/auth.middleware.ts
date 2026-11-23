@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { UserModel } from "../modules/user/user.model.js";
 import { catchAsync } from "../utils/catchAsync.js";
+import { errorResponse } from "../utils/response.utils.js";
 
 // توسيع واجهة الـ Request في TypeScript عشان يقبل user و accessToken بدون أخطاء
 declare global {
@@ -35,7 +36,8 @@ export const requireAuth = catchAsync(
 
       // 3. التأكد إن المستخدم لسه موجود وحسابه نشط (Active) في قاعدة البيانات
       const user = await UserModel.findById(decoded.userId);
-      if (!user || user.status !== "Active") {
+      const status = (user?.status ?? "").toString().toLowerCase();
+      if (!user || status !== "active") {
         res.status(401).json({
           success: false,
           error: "User no longer exists or account is inactive.",
@@ -58,3 +60,36 @@ export const requireAuth = catchAsync(
     }
   },
 );
+export const authorizeRoles = (...allowedRoles: string[]) => {
+  return async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    const authUser = (req as any).user;
+
+    if (!authUser || !authUser.userId) {
+      res.status(401).json(errorResponse("Not authenticated", "UNAUTHORIZED"));
+      return;
+    }
+
+    // نجيب البروفايل الكامل عشان نعرف دوره الفعلي في الداتا بيز
+    const fullUser = await UserModel.findById(authUser.userId);
+
+    if (!fullUser || !allowedRoles.includes(fullUser.role)) {
+      res
+        .status(403)
+        .json(
+          errorResponse(
+            `Access denied. Required role: ${allowedRoles.join(" or ")}`,
+            "FORBIDDEN",
+          ),
+        );
+      return;
+    }
+
+    // نحفظ الدور في req.user عشان نستخدمه جوه الكونترولر لو احتجناه
+    (req as any).user.role = fullUser.role;
+    next();
+  };
+};

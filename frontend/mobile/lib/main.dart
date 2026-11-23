@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:MediReach/my_app/medi_reach.dart';
-import 'package:MediReach/core/services/deep_link_service.dart';
+import './my_app/medi_reach.dart';
+import './core/services/deep_link_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

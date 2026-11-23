@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:MediReach/feature/auth/presentation/cubit/auth_cubit.dart';
-import 'package:MediReach/feature/auth/presentation/cubit/auth_state.dart';
+import '../../../../feature/auth/presentation/cubit/auth_cubit.dart';
+import '../../../../feature/auth/presentation/cubit/auth_state.dart';
 import '../../data/models/appointment_model.dart';
 import '../../widgets/appointment_card.dart';
 import '../../widgets/dashboard_header.dart';
@@ -87,9 +87,7 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
           children: [
-            DashboardHeader(
-              onBellTap: _confirmSignOut,
-            ),
+            DashboardHeader(onBellTap: _confirmSignOut),
             const SizedBox(height: 24),
             WelcomeBanner(
               doctorName: doctorName,

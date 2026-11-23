@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../data/auth_repository.dart';
+import '../../../../feature/auth/data/auth_repository.dart';
 import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 import 'patient_login_view.dart';
@@ -19,11 +19,14 @@ class AuthLoginPage extends StatelessWidget {
             if (role == 'provider' || role == 'doctor') {
               Navigator.pushReplacementNamed(context, '/doctor_dashboard');
             } else {
-              Navigator.pushReplacementNamed(context, '/patient_login');
+              Navigator.pushReplacementNamed(context, '/patient_home');
             }
           } else if (state is AuthError) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(state.message), backgroundColor: Colors.red),
+              SnackBar(
+                content: Text(state.message),
+                backgroundColor: Colors.red,
+              ),
             );
           }
         },

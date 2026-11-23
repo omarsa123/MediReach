@@ -8,10 +8,7 @@ import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 
 class EmailVerificationView extends StatefulWidget {
-  const EmailVerificationView({
-    super.key,
-    this.email,
-  });
+  const EmailVerificationView({super.key, this.email});
 
   final String? email;
 
@@ -20,43 +17,13 @@ class EmailVerificationView extends StatefulWidget {
 }
 
 class _EmailVerificationViewState extends State<EmailVerificationView> {
-  String? _tokenFromLink;
-  bool _autoVerifyStarted = false;
+  final TextEditingController _otpController = TextEditingController();
   bool _linkSent = false;
 
-  /// JWT عادةً 3 أجزاء مفصولة بنقطتين (header.payload.signature)
-  bool _looksLikeJwt(String value) {
-    final parts = value.split('.');
-    return parts.length == 3 &&
-        parts.every((p) => p.isNotEmpty) &&
-        !value.contains('@');
-  }
-
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_autoVerifyStarted) return;
-
-    final args = ModalRoute.of(context)?.settings.arguments;
-    String? token;
-
-    if (args is Map) {
-      final t = args['token']?.toString();
-      if (t != null && t.isNotEmpty && _looksLikeJwt(t)) {
-        token = t;
-      }
-    } else if (args is String && _looksLikeJwt(args)) {
-      token = args;
-    }
-
-    if (token != null) {
-      _tokenFromLink = token;
-      _autoVerifyStarted = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        context.read<AuthCubit>().verifyEmail(token!);
-      });
-    }
+  void dispose() {
+    _otpController.dispose();
+    super.dispose();
   }
 
   String _resolveEmail() {
@@ -65,16 +32,15 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
 
     if (routeArgs is Map) {
       routeEmail = routeArgs['email']?.toString();
-    } else if (routeArgs is String && !_looksLikeJwt(routeArgs)) {
-      // بعد التسجيل بنبعت الإيميل كـ argument نصي
+    } else if (routeArgs is String) {
       routeEmail = routeArgs;
     }
 
     return widget.email ?? routeEmail ?? '';
   }
 
-  /// زرار Verify: يبعت لينك التفعيل فقط (مش بيعمل verify بالتوكن)
-  void _onSendVerificationLink(String email) {
+  /// إرسال كود الـ OTP للبريد الإلكتروني
+  void _onSendVerificationCode(String email) {
     if (email.isEmpty || email == 'yourname@email.com') {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -87,11 +53,37 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
     context.read<AuthCubit>().resendVerification(email);
   }
 
+  /// تنفيذ عملية التحقق باستخدام الـ Email و الـ OTP
+  void _onVerifyOtp(String email) {
+    final otp = _otpController.text.trim();
+    if (otp.isEmpty || otp.length < 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid verification code (OTP).'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Email address is missing.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    context.read<AuthCubit>().verifyEmail(email: email, otp: otp);
+  }
+
   @override
   Widget build(BuildContext context) {
     final displayEmail = _resolveEmail();
-    final hasEmail = displayEmail.isNotEmpty && displayEmail != 'yourname@email.com';
-    final isFromDeepLink = _tokenFromLink != null && _tokenFromLink!.isNotEmpty;
+    final hasEmail =
+        displayEmail.isNotEmpty && displayEmail != 'yourname@email.com';
 
     return BlocConsumer<AuthCubit, AuthState>(
       listener: (context, state) {
@@ -116,25 +108,8 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
             ),
           );
         } else if (state is AuthError) {
-          // مظهرش invalid token لو مفيش توكن أصلاً (حالة زرار الإرسال)
-          final isTokenError = state.code == 'INVALID_TOKEN' ||
-              state.message.toLowerCase().contains('invalid') &&
-                  state.message.toLowerCase().contains('token');
-
-          if (isTokenError && !isFromDeepLink) {
-            // تجاهل — ده كان بيحصل غلط لما الإيميل اتفك كتوكن
-            return;
-          }
-
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                isTokenError
-                    ? 'This verification link is invalid or has expired. Please request a new one.'
-                    : state.message,
-              ),
-              backgroundColor: Colors.red,
-            ),
+            SnackBar(content: Text(state.message), backgroundColor: Colors.red),
           );
         }
       },
@@ -160,28 +135,24 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
                       color: const Color(0xFFD9F5F0),
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: AppColors.button1background.withValues(alpha: 0.25),
+                        color: AppColors.button1background.withValues(
+                          alpha: 0.25,
+                        ),
                         width: 2,
                       ),
                     ),
-                    child: Center(
+                    child: const Center(
                       child: Icon(
-                        isFromDeepLink
-                            ? Icons.verified_outlined
-                            : Icons.mail_outline_rounded,
+                        Icons.mark_email_read_outlined,
                         size: 36,
                         color: AppColors.button1background,
                       ),
                     ),
                   ),
                   const SizedBox(height: 28),
-                  Text(
-                    isFromDeepLink
-                        ? 'Verifying your email'
-                        : _linkSent
-                            ? 'Check your inbox'
-                            : 'Verify your email',
-                    style: const TextStyle(
+                  const Text(
+                    'Verify your email',
+                    style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF0F172A),
@@ -190,11 +161,9 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    isFromDeepLink
-                        ? 'Please wait while we confirm your email address...'
-                        : _linkSent
-                            ? 'We sent a verification link to your email. Open it to activate your account.'
-                            : 'Tap the button below to receive a verification link on your email.',
+                    _linkSent
+                        ? 'We have sent a verification code to your email. Enter it below.'
+                        : 'Tap the button below to receive your verification code.',
                     style: const TextStyle(
                       fontSize: 14,
                       height: 1.45,
@@ -251,48 +220,54 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
                         ],
                       ),
                     ),
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 24),
 
-                  // من Deep Link → بنعمل verify تلقائي (مفيش زرار إرسال)
-                  if (isFromDeepLink)
-                    AuthButton(
-                      label: isLoading ? 'Verifying...' : 'Verifying email',
-                      showArrow: false,
-                      isLoading: isLoading,
-                      onPressed: isLoading
-                          ? null
-                          : () {
-                              if (_tokenFromLink != null) {
-                                context
-                                    .read<AuthCubit>()
-                                    .verifyEmail(_tokenFromLink!);
-                              }
-                            },
-                    )
-                  else ...[
-                    // بعد التسجيل: زرار بيبعت اللينك فقط
-                    AuthButton(
-                      label: _linkSent
-                          ? (isLoading ? 'Sending...' : 'Resend link')
-                          : (isLoading ? 'Sending...' : 'Send verification link'),
-                      showArrow: false,
-                      isLoading: isLoading,
-                      onPressed: isLoading
-                          ? null
-                          : () => _onSendVerificationLink(displayEmail),
-                    ),
-                    if (_linkSent) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        'Didn\'t get the email? Check spam, or resend.',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.secondary.withValues(alpha: 0.9),
-                        ),
-                        textAlign: TextAlign.center,
+                  // حقل إدخال كود الـ OTP
+                  TextField(
+                    controller: _otpController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Verification Code (OTP)',
+                      hintText: 'Enter 4 or 6-digit code',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    ],
-                  ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // زرار التحقق من الـ OTP
+                  AuthButton(
+                    label: isLoading ? 'Verifying...' : 'Verify Email',
+                    showArrow: false,
+                    isLoading: isLoading,
+                    onPressed: isLoading
+                        ? null
+                        : () => _onVerifyOtp(displayEmail),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // زرار إرسال أو إعادة إرسال الكود
+                  OutlinedButton(
+                    onPressed: isLoading
+                        ? null
+                        : () => _onSendVerificationCode(displayEmail),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      _linkSent ? 'Resend Code' : 'Send Code',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.button1background,
+                      ),
+                    ),
+                  ),
 
                   const SizedBox(height: 24),
                   TextButton(

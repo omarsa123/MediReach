@@ -1,32 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'api_exceptions.dart';
 
 class ApiClient {
   static String get defaultBaseUrl {
-  if (kIsWeb) return 'http://localhost:5050';
-
-  try {
-    if (Platform.isAndroid) {
-      return 'http://192.168.1.6:5050';
-    }
-  } catch (_) {}
-
-  return 'http://localhost:5050';
-}
+    // رابط الـ Ngrok الخاص بك
+    return 'https://unsworn-upgrade-maternity.ngrok-free.dev';
+  }
 
   final String baseUrl;
   final http.Client _client;
   static const Duration timeoutDuration = Duration(seconds: 15);
 
-  ApiClient({
-    String? baseUrl,
-    http.Client? client,
-  })  : baseUrl = baseUrl ?? defaultBaseUrl,
-        _client = client ?? http.Client();
+  ApiClient({String? baseUrl, http.Client? client})
+    : baseUrl = baseUrl ?? defaultBaseUrl,
+      _client = client ?? http.Client();
 
   Map<String, String> _headers([String? token]) {
     final headers = <String, String>{
@@ -64,14 +54,7 @@ class ApiClient {
       );
     } catch (e) {
       if (e is ApiException) rethrow;
-      final msg = e.toString().toLowerCase();
-      if (msg.contains('socket') ||
-          msg.contains('network') ||
-          msg.contains('connection') ||
-          msg.contains('failed host lookup')) {
-        throw const NetworkException();
-      }
-      throw NetworkException(message: 'Network error. Please try again.');
+      throw const NetworkException();
     }
   }
 
@@ -104,14 +87,7 @@ class ApiClient {
       );
     } catch (e) {
       if (e is ApiException) rethrow;
-      final msg = e.toString().toLowerCase();
-      if (msg.contains('socket') ||
-          msg.contains('network') ||
-          msg.contains('connection') ||
-          msg.contains('failed host lookup')) {
-        throw const NetworkException();
-      }
-      throw NetworkException(message: 'Network error. Please try again.');
+      throw const NetworkException();
     }
   }
 
@@ -140,13 +116,7 @@ class ApiClient {
       throw const NetworkException();
     } catch (e) {
       if (e is ApiException) rethrow;
-      final msg = e.toString().toLowerCase();
-      if (msg.contains('socket') ||
-          msg.contains('network') ||
-          msg.contains('connection')) {
-        throw const NetworkException();
-      }
-      throw NetworkException(message: 'Network error. Please try again.');
+      throw const NetworkException();
     }
   }
 
@@ -168,8 +138,7 @@ class ApiClient {
       }
     } catch (_) {
       throw ApiException(
-        message:
-            'Invalid response format from server (${response.statusCode})',
+        message: 'Invalid response format from server (${response.statusCode})',
         statusCode: response.statusCode,
       );
     }
@@ -183,7 +152,8 @@ class ApiClient {
     Map<String, dynamic>? data;
 
     if (jsonBody is Map<String, dynamic>) {
-      message = jsonBody['error']?.toString() ??
+      message =
+          jsonBody['error']?.toString() ??
           jsonBody['message']?.toString() ??
           message;
       code = jsonBody['code']?.toString();

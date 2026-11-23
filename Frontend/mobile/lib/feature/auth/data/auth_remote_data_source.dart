@@ -4,139 +4,228 @@ import 'models/user_model.dart';
 
 abstract class AuthRemoteDataSource {
   Future<AuthResponseModel> register(Map<String, dynamic> payload);
+
   Future<AuthResponseModel> login(String email, String password);
+
   Future<AuthResponseModel> refresh(String refreshToken);
-  Future<Map<String, dynamic>> logout([String? accessToken]);
-  Future<Map<String, dynamic>> forgotPassword(String email);
-  Future<Map<String, dynamic>> resetPassword(String token, String newPassword);
-  Future<Map<String, dynamic>> verifyEmail(String token);
-  Future<Map<String, dynamic>> resendVerification(String email);
+
+  Future<void> logout([String? accessToken]);
+
+  Future<void> forgotPassword(String email);
+
+  Future<void> resetPassword({
+    required String email,
+    required String otp,
+    required String newPassword,
+  });
+
+  Future<void> verifyEmail({required String email, required String otp});
+
+  Future<void> resendVerification(String email);
+
   Future<UserModel> getMe(String accessToken);
+
   Future<UserModel> updateMe(String accessToken, Map<String, dynamic> data);
+
   Future<String> getGoogleAuthUrl();
-  Future<AuthResponseModel> googleCallback(String accessToken, String refreshToken);
+
+  Future<AuthResponseModel> googleCallback(
+    String accessToken,
+    String refreshToken,
+  );
 }
 
 class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
   final ApiClient _apiClient;
 
   AuthRemoteDataSourceImpl({ApiClient? apiClient})
-      : _apiClient = apiClient ?? ApiClient();
+    : _apiClient = apiClient ?? ApiClient();
 
+  /// Safely convert API response to Map.
+  Map<String, dynamic> _toMap(dynamic response) {
+    if (response is Map<String, dynamic>) {
+      return response;
+    }
+
+    if (response is Map) {
+      return Map<String, dynamic>.from(response);
+    }
+
+    throw const FormatException('Invalid response format from server');
+  }
+
+  /// Extract nested data from API response.
+  Map<String, dynamic> _extractData(dynamic response) {
+    final map = _toMap(response);
+    final data = map['data'];
+
+    if (data is Map<String, dynamic>) {
+      return data;
+    }
+
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+
+    return map;
+  }
+
+  /// Register a new user.
   @override
   Future<AuthResponseModel> register(Map<String, dynamic> payload) async {
     final response = await _apiClient.post(
-      '/api/auth/register',
+      '/api/v1/auth/register',
       body: payload,
     );
-    return AuthResponseModel.fromJson(response as Map<String, dynamic>);
+
+    return AuthResponseModel.fromJson(_toMap(response));
   }
 
+  /// Login with email and password.
   @override
   Future<AuthResponseModel> login(String email, String password) async {
     final response = await _apiClient.post(
-      '/api/auth/login',
-      body: {'email': email, 'password': password},
+      '/api/v1/auth/login',
+      body: {'email': email.trim(), 'password': password},
     );
-    return AuthResponseModel.fromJson(response as Map<String, dynamic>);
+
+    return AuthResponseModel.fromJson(_toMap(response));
   }
 
+  /// Refresh authentication tokens.
   @override
   Future<AuthResponseModel> refresh(String refreshToken) async {
     final response = await _apiClient.post(
-      '/api/auth/refresh',
+      '/api/v1/auth/refresh',
       body: {'refreshToken': refreshToken},
     );
-    return AuthResponseModel.fromJson(response as Map<String, dynamic>);
+
+    return AuthResponseModel.fromJson(_toMap(response));
   }
 
+  /// Logout current user.
   @override
-  Future<Map<String, dynamic>> logout([String? accessToken]) async {
-    final response = await _apiClient.post(
-      '/api/auth/logout',
-      token: accessToken,
+  Future<void> logout([String? accessToken]) async {
+    await _apiClient.post('/api/v1/auth/logout', token: accessToken);
+  }
+
+  /// Request password recovery email.
+  @override
+  Future<void> forgotPassword(String email) async {
+    await _apiClient.post(
+      '/api/v1/auth/forgot-password',
+      body: {'email': email.trim()},
     );
-    return response as Map<String, dynamic>;
   }
 
+  /// Reset user password.
   @override
-  Future<Map<String, dynamic>> forgotPassword(String email) async {
-    final response = await _apiClient.post(
-      '/api/auth/forget-password',
-      body: {'email': email},
-    );
-    return response as Map<String, dynamic>;
-  }
-
-  @override
-  Future<Map<String, dynamic>> resetPassword(String token, String newPassword) async {
-    final response = await _apiClient.post(
-      '/api/auth/reset-password',
+  Future<void> resetPassword({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
+    await _apiClient.post(
+      '/api/v1/auth/reset-password',
       body: {
-        'token': token,
-        'password': newPassword,
+        'email': email.trim(),
+        'otp': otp.trim(),
+        'newPassword': newPassword,
       },
     );
-    return response as Map<String, dynamic>;
   }
 
+  /// Verify email using OTP.
   @override
-  Future<Map<String, dynamic>> verifyEmail(String token) async {
-    final response = await _apiClient.post(
-      '/api/auth/verify-email',
-      body: {'token': token},
+  Future<void> verifyEmail({required String email, required String otp}) async {
+    await _apiClient.post(
+      '/api/v1/auth/verify-email',
+      body: {'email': email.trim(), 'otp': otp.trim()},
     );
-    return response as Map<String, dynamic>;
   }
 
+  /// Resend email verification.
   @override
-  Future<Map<String, dynamic>> resendVerification(String email) async {
-    final response = await _apiClient.post(
-      '/api/auth/resend-verification',
-      body: {'email': email},
+  Future<void> resendVerification(String email) async {
+    await _apiClient.post(
+      '/api/v1/auth/resend-verification',
+      body: {'email': email.trim()},
     );
-    return response as Map<String, dynamic>;
   }
 
+  /// Get current authenticated user.
   @override
   Future<UserModel> getMe(String accessToken) async {
     final response = await _apiClient.get(
-      '/api/auth/me',
+      '/api/v1/auth/me',
       token: accessToken,
     );
-    final data = response['data'] ?? response;
+
+    final data = _extractData(response);
+
     final userData = data['user'] ?? data;
-    return UserModel.fromJson(userData as Map<String, dynamic>);
+
+    if (userData is! Map) {
+      throw const FormatException('Invalid user data received from server');
+    }
+
+    return UserModel.fromJson(Map<String, dynamic>.from(userData));
   }
 
+  /// Update current user profile.
   @override
-  Future<UserModel> updateMe(String accessToken, Map<String, dynamic> data) async {
+  Future<UserModel> updateMe(
+    String accessToken,
+    Map<String, dynamic> data,
+  ) async {
     final response = await _apiClient.patch(
-      '/api/auth/me',
+      '/api/v1/auth/me',
       token: accessToken,
       body: data,
     );
-    final resData = response['data'] ?? response;
-    final userData = resData['user'] ?? resData;
-    return UserModel.fromJson(userData as Map<String, dynamic>);
+
+    final responseData = _extractData(response);
+
+    final userData = responseData['user'] ?? responseData;
+
+    if (userData is! Map) {
+      throw const FormatException(
+        'Invalid updated user data received from server',
+      );
+    }
+
+    return UserModel.fromJson(Map<String, dynamic>.from(userData));
   }
 
+  /// Get Google OAuth authorization URL.
   @override
   Future<String> getGoogleAuthUrl() async {
-    final response = await _apiClient.get('/api/auth/google-url');
-    final data = response['data'] ?? response;
-    return (data['url'] ?? '').toString();
+    final response = await _apiClient.get('/api/v1/auth/google-url');
+
+    final data = _extractData(response);
+
+    final url = data['url'];
+
+    if (url == null || url.toString().trim().isEmpty) {
+      throw const FormatException(
+        'Google authorization URL was not returned by server',
+      );
+    }
+
+    return url.toString();
   }
 
+  /// Complete Google OAuth callback.
   @override
-  Future<AuthResponseModel> googleCallback(String accessToken, String refreshToken) async {
+  Future<AuthResponseModel> googleCallback(
+    String accessToken,
+    String refreshToken,
+  ) async {
     final response = await _apiClient.post(
-      '/api/auth/google/callback',
-      body: {
-        'accessToken': accessToken,
-        'refreshToken': refreshToken,
-      },
+      '/api/v1/auth/google/callback',
+      body: {'accessToken': accessToken, 'refreshToken': refreshToken},
     );
-    return AuthResponseModel.fromJson(response as Map<String, dynamic>);
+
+    return AuthResponseModel.fromJson(_toMap(response));
   }
 }

@@ -1,6 +1,9 @@
+@baseUrl = http://localhost:5000/api/v1/auth
+@contentType = application/json
+
 ### 1. Register New Patient
-POST http://localhost:5000/api/auth/register
-Content-Type: application/json
+POST {{baseUrl}}/register
+Content-Type: {{contentType}}
 
 {
   "name": "Felobateer Wael",
@@ -14,8 +17,8 @@ Content-Type: application/json
 }
 
 ### 2. Register New Doctor
-POST http://localhost:5000/api/auth/register
-Content-Type: application/json
+POST {{baseUrl}}/register
+Content-Type: {{contentType}}
 
 {
   "name": "Dr. Sarah Johnson",
@@ -29,77 +32,61 @@ Content-Type: application/json
   "licenseNumber": "DOC-123456"
 }
 
-### 3. Login
-POST http://localhost:5000/api/auth/login
-Content-Type: application/json
+### 3. Login Patient
+POST {{baseUrl}}/login
+Content-Type: {{contentType}}
 
 {
   "email": "felo.test1@gmail.com",
   "password": "Password123!"
 }
 
-### 4. Refresh Token
-POST http://localhost:5000/api/auth/refresh
-Content-Type: application/json
+### 4. Resend Verification Email
+POST {{baseUrl}}/resend-verification
+Content-Type: {{contentType}}
 
 {
-  "refreshToken": "<REFRESH_TOKEN>"
+  "email": "felo.test1@gmail.com"
 }
 
-### 5. Verify Email
-POST http://localhost:5000/api/auth/verify-email
-Content-Type: application/json
+### 5. Verify Email (استبدل 123456 بالكود الفعلي اللي وصلك في الإيميل)
+POST {{baseUrl}}/verify-email
+Content-Type: {{contentType}}
 
 {
-  "token": "<VERIFICATION_TOKEN>"
+  "email": "felo.test1@gmail.com",
+  "otp": "123456"
 }
 
-### 6. Resend Verification Email
-POST http://localhost:5000/api/auth/resend-verification
+### 6. Forgot Password
+POST {{baseUrl}}/forgot-password
+Content-Type: {{contentType}}
+
+{
+  "email": "felo.test1@gmail.com"
+}
+
+### 7. Reset Password (استبدل 123456 بالكود اللي وصلك لتغيير الباسورد)
+POST {{baseUrl}}/reset-password
+Content-Type: {{contentType}}
+
+{
+  "email": "felo.test1@gmail.com",
+  "otp": "123456",
+  "newPassword": "NewPassword123!"
+}
+
+### 8. Google Auth URL
+GET {{baseUrl}}/google-url
+
+### Hard Delete User (Dev Helper)
+POST http://localhost:5050/api/v1/auth/hard-delete
 Content-Type: application/json
 
 {
   "email": "felo.test1@gmail.com"
 }
 
-### 7. Forgot Password
-POST http://localhost:5000/api/auth/forget-password
-Content-Type: application/json
 
-{
-  "email": "felo.test1@gmail.com"
-}
-
-### 8. Reset Password
-POST http://localhost:5000/api/auth/reset-password
-Content-Type: application/json
-
-{
-  "token": "<RESET_TOKEN>",
-  "password": "NewPassword123!"
-}
-
-### 9. Get Current User Profile (/api/auth/me)
-GET http://localhost:5000/api/auth/me
-Authorization: Bearer <ACCESS_TOKEN>
-
-### 10. Get User via Mounted User Router (/api/users/me)
-GET http://localhost:5000/api/users/me
-Authorization: Bearer <ACCESS_TOKEN>
-
-### 11. Update Profile (/api/auth/me)
-PATCH http://localhost:5000/api/auth/me
-Authorization: Bearer <ACCESS_TOKEN>
-Content-Type: application/json
-
-{
-  "name": "Felobateer Wael Updated",
-  "phone": "01099998888"
-}
-
-### 12. Google Auth URL
-GET http://localhost:5000/api/auth/google-url
-
-### 13. Logout
-POST http://localhost:5000/api/auth/logout
-Authorization: Bearer <ACCESS_TOKEN>
+### Clean Orphans Quick (No Auth)
+POST http://localhost:5050/api/v1/auth/clean-orphans-quick

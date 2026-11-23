@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:MediReach/core/constants/app_assets.dart';
-import 'package:MediReach/core/constants/app_fonts.dart';
-import 'package:MediReach/core/services/user_preferences.dart';
+import '../../../../core/constants/app_assets.dart';
+import '../../../../core/constants/app_fonts.dart';
+import '../../../../core/services/user_preferences.dart';
 import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 
@@ -23,27 +23,30 @@ class _SplashViewState extends State<SplashView> {
   }
 
   Future<void> navigateNext() async {
-    // Session restoration
     final authCubit = context.read<AuthCubit>();
-    await authCubit.restoreSession();
 
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      // محاولة استعادة الجلسة بمهلة زمنية قصيرة عشان الاسبلاش ما تعلّقش للأبد لو النت بطيء
+      await authCubit.restoreSession().timeout(const Duration(seconds: 4));
+    } catch (_) {
+      // لو حصل timeout أو إيرور، نتجاهله ونكمل بالطرق العادية (SharedPreferences)
+    }
 
     if (!mounted) return;
 
     final authState = authCubit.state;
     if (authState is AuthAuthenticated) {
-      final role = authState.user.role;
+      final role = authState.user.role.toLowerCase();
       if (role == 'provider' || role == 'doctor') {
         Navigator.pushReplacementNamed(context, '/doctor_dashboard');
         return;
       } else {
-        // Patient authenticated session
-        Navigator.pushReplacementNamed(context, '/patient_login');
+        Navigator.pushReplacementNamed(context, '/patient_home');
         return;
       }
     }
 
+    // لو مفيش جلسة نشطة، نشوف الشPreferences القديمة
     final isVisited = await UserPreferences.isVisited();
     final savedRole = await UserPreferences.getRole();
 
@@ -52,10 +55,11 @@ class _SplashViewState extends State<SplashView> {
     if (!isVisited) {
       Navigator.pushReplacementNamed(context, '/onboarding');
     } else if (savedRole != null) {
-      if (savedRole == 'provider' || savedRole == 'doctor') {
+      final roleLower = savedRole.toLowerCase();
+      if (roleLower == 'provider' || roleLower == 'doctor') {
         Navigator.pushReplacementNamed(context, '/doctor_login');
       } else {
-        Navigator.pushReplacementNamed(context, '/patient_login');
+        Navigator.pushReplacementNamed(context, '/patient_home');
       }
     } else {
       Navigator.pushReplacementNamed(context, '/select_role');

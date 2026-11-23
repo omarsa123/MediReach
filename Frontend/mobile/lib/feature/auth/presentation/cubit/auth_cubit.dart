@@ -1,6 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/network/api_exceptions.dart';
-import '../../data/auth_repository.dart';
+import '../../../../feature/auth/data/auth_repository.dart';
 import 'auth_state.dart';
 
 class AuthCubit extends Cubit<AuthState> {
@@ -22,6 +22,15 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
+  /// Get Google Auth URL
+  Future<String?> getGoogleAuthUrl() async {
+    try {
+      return await _repo.getGoogleAuthUrl();
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Login with role validation
   Future<void> loginUser({
     required String email,
@@ -35,18 +44,34 @@ class AuthCubit extends Cubit<AuthState> {
         password: password,
         expectedRole: expectedRole,
       );
+
+      // فحص إضافي للتأكد من حالة الحساب لو جاي Pending
+      if (user.status.toLowerCase() == 'pending') {
+        emit(
+          AuthEmailNotVerified(
+            email: user.email,
+            message: 'Your account is pending approval by the administrator.',
+          ),
+        );
+        return;
+      }
+
       emit(AuthAuthenticated(user, message: 'Welcome back, ${user.name}!'));
     } on EmailNotVerifiedException catch (e) {
-      emit(AuthEmailNotVerified(
-        email: e.email.isNotEmpty ? e.email : email.trim(),
-        message: e.message,
-      ));
+      emit(
+        AuthEmailNotVerified(
+          email: e.email.isNotEmpty ? e.email : email.trim(),
+          message: e.message,
+        ),
+      );
     } on RoleMismatchException catch (e) {
       emit(AuthError(e.message, code: 'ROLE_MISMATCH'));
     } on NetworkException catch (e) {
       emit(AuthError(e.message, code: 'NETWORK_ERROR'));
     } on ApiException catch (e) {
-      emit(AuthError(e.message, code: e.code, email: e.data?['email']?.toString()));
+      emit(
+        AuthError(e.message, code: e.code, email: e.data?['email']?.toString()),
+      );
     } catch (e) {
       emit(AuthError('Login failed. Please try again.'));
     }
@@ -116,13 +141,12 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Verify Email
-  Future<void> verifyEmail(String token) async {
+  /// Verify Email with email & OTP
+  Future<void> verifyEmail({required String email, required String otp}) async {
     emit(const AuthLoading(message: 'Verifying email...'));
     try {
-      final res = await _repo.verifyEmail(token);
-      final msg = res['message']?.toString() ?? 'Email verified successfully!';
-      emit(AuthEmailVerificationSuccess(msg));
+      await _repo.verifyEmail(email: email, otp: otp);
+      emit(const AuthEmailVerificationSuccess('Email verified successfully!'));
     } on NetworkException catch (e) {
       emit(AuthError(e.message, code: 'NETWORK_ERROR'));
     } on ApiException catch (e) {
@@ -137,10 +161,12 @@ class AuthCubit extends Cubit<AuthState> {
     emit(const AuthLoading(message: 'Sending verification email...'));
     try {
       await _repo.resendVerification(email);
-      emit(AuthEmailResent(
-        email: email,
-        message: 'A verification link has been sent to $email.',
-      ));
+      emit(
+        AuthEmailResent(
+          email: email,
+          message: 'A verification code has been sent to $email.',
+        ),
+      );
     } on NetworkException catch (e) {
       emit(AuthError(e.message, code: 'NETWORK_ERROR'));
     } on ApiException catch (e) {
@@ -155,10 +181,12 @@ class AuthCubit extends Cubit<AuthState> {
     emit(const AuthLoading(message: 'Sending reset instructions...'));
     try {
       await _repo.forgotPassword(email);
-      emit(AuthPasswordResetEmailSent(
-        email: email,
-        message: 'Password reset link sent! Please check your inbox.',
-      ));
+      emit(
+        AuthPasswordResetEmailSent(
+          email: email,
+          message: 'Password reset code sent! Please check your inbox.',
+        ),
+      );
     } on NetworkException catch (e) {
       emit(AuthError(e.message, code: 'NETWORK_ERROR'));
     } on ApiException catch (e) {
@@ -168,12 +196,24 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Reset Password
-  Future<void> resetPassword(String token, String newPassword) async {
+  /// Reset Password with email, otp, and newPassword
+  Future<void> resetPassword({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
     emit(const AuthLoading(message: 'Resetting password...'));
     try {
-      await _repo.resetPassword(token: token, newPassword: newPassword);
-      emit(const AuthPasswordResetSuccess('Password reset successfully! Please sign in.'));
+      await _repo.resetPassword(
+        email: email,
+        otp: otp,
+        newPassword: newPassword,
+      );
+      emit(
+        const AuthPasswordResetSuccess(
+          'Password reset successfully! Please sign in.',
+        ),
+      );
     } on NetworkException catch (e) {
       emit(AuthError(e.message, code: 'NETWORK_ERROR'));
     } on ApiException catch (e) {
@@ -214,7 +254,8 @@ class AuthCubit extends Cubit<AuthState> {
         email: payload['email']?.toString() ?? '',
         phone: payload['phone']?.toString() ?? '',
         password: payload['password']?.toString() ?? '',
-        specialization: payload['specialization']?.toString() ?? 'General Practitioner',
+        specialization:
+            payload['specialization']?.toString() ?? 'General Practitioner',
         licenseNumber: payload['licenseNumber']?.toString() ?? '',
       );
     } else {

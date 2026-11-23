@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
 import '../../widgets/auth_app_bar.dart';
@@ -12,10 +13,7 @@ import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 
 class PatientLoginView extends StatefulWidget {
-  const PatientLoginView({
-    super.key,
-    this.initialRole = AuthRole.patient,
-  });
+  const PatientLoginView({super.key, this.initialRole = AuthRole.patient});
 
   final AuthRole initialRole;
 
@@ -54,10 +52,32 @@ class _PatientLoginViewState extends State<PatientLoginView> {
       }
 
       context.read<AuthCubit>().loginUser(
-            email: _identifierController.text.trim(),
-            password: _passwordController.text,
-            expectedRole: expectedRole,
-          );
+        email: _identifierController.text.trim(),
+        password: _passwordController.text,
+        expectedRole: expectedRole,
+      );
+    }
+  }
+
+  Future<void> _onGooglePressed() async {
+    final url = await context.read<AuthCubit>().getGoogleAuthUrl();
+    if (!mounted || url == null) return;
+
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('The Google sign-in link is invalid.')),
+      );
+      return;
+    }
+
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!mounted) return;
+
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open Google sign-in.')),
+      );
     }
   }
 
@@ -77,39 +97,42 @@ class _PatientLoginViewState extends State<PatientLoginView> {
     final appBarTitle = isDoctor
         ? 'DOCTOR LOGIN'
         : isOrganizer
-            ? 'ORGANIZER LOGIN'
-            : 'PATIENT LOGIN';
+        ? 'ORGANIZER LOGIN'
+        : 'PATIENT LOGIN';
 
     final subhead = isDoctor
         ? 'Sign in to manage your practice and appointments.'
         : isOrganizer
-            ? 'Sign in to manage your clinic and staff.'
-            : 'Sign in to manage your health and appointments.';
+        ? 'Sign in to manage your clinic and staff.'
+        : 'Sign in to manage your health and appointments.';
 
     final identifierLabel = isDoctor
         ? 'Email Address / Doctor ID'
         : isOrganizer
-            ? 'Organization ID / Email'
-            : 'Email or Phone number';
+        ? 'Organization ID / Email'
+        : 'Email or Phone number';
 
     final identifierHint = isDoctor
         ? 'doctor@medicare.com'
         : isOrganizer
-            ? 'admin@hospital.com'
-            : 'Enter your email or phone';
+        ? 'admin@hospital.com'
+        : 'Enter your email or phone';
 
     return BlocConsumer<AuthCubit, AuthState>(
       listener: (context, state) {
         if (state is AuthAuthenticated) {
-          if (state.user.isDoctor) {
+          final user = state.user;
+
+          // التوجيه الذكي حسب دور المستخدم (Role) مع تفادي اللودينج العالق
+          if (user.isDoctor) {
             Navigator.pushReplacementNamed(context, '/doctor_dashboard');
+          } else if (user.isPatient) {
+            Navigator.pushReplacementNamed(
+              context,
+              '/patient_home',
+            ); // أو شاشة الهوم للمريض
           } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(state.message ?? 'Signed in as ${state.user.name} successfully!'),
-                backgroundColor: AppColors.button1background,
-              ),
-            );
+            Navigator.pushReplacementNamed(context, '/select_role');
           }
         } else if (state is AuthEmailNotVerified) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -124,11 +147,9 @@ class _PatientLoginViewState extends State<PatientLoginView> {
             arguments: state.email,
           );
         } else if (state is AuthError) {
+          // هنا الكيوبيت بيطلع من حالة التحميل تلقائياً لما يبعت AuthError
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red,
-            ),
+            SnackBar(content: Text(state.message), backgroundColor: Colors.red),
           );
         }
       },
@@ -137,9 +158,7 @@ class _PatientLoginViewState extends State<PatientLoginView> {
 
         return Scaffold(
           backgroundColor: Colors.white,
-          appBar: AuthAppBar(
-            title: appBarTitle,
-          ),
+          appBar: AuthAppBar(title: appBarTitle),
           body: SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -193,8 +212,9 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                       controller: _passwordController,
                       isPassword: true,
                       prefixIcon: Icons.lock_outline_rounded,
-                      validator: (v) =>
-                          (v == null || v.isEmpty) ? 'Please enter your password' : null,
+                      validator: (v) => (v == null || v.isEmpty)
+                          ? 'Please enter your password'
+                          : null,
                     ),
                     const SizedBox(height: 10),
                     Row(
@@ -253,11 +273,7 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                       onPressed: _onSignIn,
                     ),
                     const SizedBox(height: 22),
-                    AuthSocialButton(
-                      onGooglePressed: () {
-                        // Google Sign In URL
-                      },
-                    ),
+                    AuthSocialButton(onGooglePressed: _onGooglePressed),
                     const SizedBox(height: 22),
                     Center(
                       child: Row(

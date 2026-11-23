@@ -49,10 +49,14 @@ export class UserModel {
           ? await bcrypt.hash(data.password, 10)
           : await bcrypt.hash("OAUTH_USER_DEFAULT_PASS", 10);
 
+      // Use Inactive (allowed by default CHECK). Patient → Active after OTP.
+      // Provider stays Inactive until admin sets Active/Approved.
+      const initialStatus = "Inactive";
+
       const insertUser = await client.query(
         `INSERT INTO public."User"
           ("userId", "name", "username", "email", "passwordHash", "phone", "address", "status")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending')
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING
            "userId", "name", "username", "email", "phone",
            "address", "profilePictureUrl", "createdAt", "status"`,
@@ -64,6 +68,7 @@ export class UserModel {
           passwordHash,
           data.phone,
           data.address ?? null,
+          initialStatus, // 👈 هنا بنمرر الحالة الصح حسب الدور
         ],
       );
 
@@ -168,10 +173,21 @@ export class UserModel {
 
     try {
       const [patientRes, providerRes, orgRes, adminRes] = await Promise.all([
-        pool.query(`SELECT "bloodType" FROM public."Patient" WHERE "userId" = $1 LIMIT 1`, [userId]),
-        pool.query(`SELECT "providerType", "specialization", "licenseNumber" FROM public."Provider" WHERE "userId" = $1 LIMIT 1`, [userId]),
-        pool.query(`SELECT "organizationName", "organizerType" FROM public."Organization" WHERE "userId" = $1 LIMIT 1`, [userId]),
-        pool.query(`SELECT 1 FROM public."Admin" WHERE "userId" = $1 LIMIT 1`, [userId]),
+        pool.query(
+          `SELECT "bloodType" FROM public."Patient" WHERE "userId" = $1 LIMIT 1`,
+          [userId],
+        ),
+        pool.query(
+          `SELECT "providerType", "specialization", "licenseNumber" FROM public."Provider" WHERE "userId" = $1 LIMIT 1`,
+          [userId],
+        ),
+        pool.query(
+          `SELECT "organizationName", "organizerType" FROM public."Organization" WHERE "userId" = $1 LIMIT 1`,
+          [userId],
+        ),
+        pool.query(`SELECT 1 FROM public."Admin" WHERE "userId" = $1 LIMIT 1`, [
+          userId,
+        ]),
       ]);
 
       if (providerRes.rows.length > 0) {
@@ -291,7 +307,10 @@ export class UserModel {
     return result.rows[0];
   }
 
-  static async updatePasswordHash(userId: string, passwordHash: string): Promise<boolean> {
+  static async updatePasswordHash(
+    userId: string,
+    passwordHash: string,
+  ): Promise<boolean> {
     const result = await pool.query(
       `UPDATE public."User"
        SET "passwordHash" = $1

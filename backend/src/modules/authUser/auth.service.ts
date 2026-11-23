@@ -1,19 +1,21 @@
-import { supabase, supabaseAdmin } from "../../config/subabase.js";
-import { UserModel } from "../../modules/user/user.model.js";
+import { randomInt } from "node:crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { UserModel } from "../../modules/user/user.model.js";
 import {
   isUniqueViolation,
   mapUniqueViolationMessage,
   toPublicUser,
 } from "../../utils/response.utils.js";
 import { EmailService } from "../../services/email.service.js";
+import { pool } from "../../config/dbconfig.js";
+import { supabase, supabaseAdmin } from "../../config/subabase.js";
 
 const getJwtSecret = (): string => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error(
-      "FATAL ERROR: JWT_SECRET is not defined in environment variables.",
+      "FATAL ERROR: JWT_SECRET is missing in environment variables.",
     );
   }
   return secret;
@@ -22,18 +24,85 @@ const getJwtSecret = (): string => {
 export const generateLocalTokens = (userId: string, email: string) => {
   const secret = getJwtSecret();
   const accessToken = jwt.sign({ userId, email }, secret, { expiresIn: "1h" });
-  const refreshToken = jwt.sign({ userId, email }, secret, { expiresIn: "7d" });
+  const localRefreshToken = jwt.sign(
+    { userId, email, type: "refresh" },
+    secret,
+    { expiresIn: "7d" },
+  );
 
   return {
     accessToken,
-    refreshToken,
+    refreshToken: localRefreshToken,
     expiresIn: 3600,
     tokenType: "bearer",
   };
 };
 
+const otpStorage = new Map<string, { code: string; expiresAt: number }>();
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function createOtp(): string {
+  return randomInt(100000, 1000000).toString();
+}
+
+function storeOtp(key: string, code: string, ttlMs = 10 * 60 * 1000) {
+  otpStorage.set(key, { code, expiresAt: Date.now() + ttlMs });
+}
+
+function getValidOtp(key: string): string | null {
+  const stored = otpStorage.get(key);
+  if (!stored) return null;
+  if (stored.expiresAt < Date.now()) {
+    otpStorage.delete(key);
+    return null;
+  }
+  return stored.code;
+}
+
+function clearOtp(key: string) {
+  otpStorage.delete(key);
+}
+
+function normalizeStatus(status: unknown): string {
+  return (status ?? "").toString().trim().toLowerCase();
+}
+
+function isLoginAllowed(status: string): boolean {
+  return status === "active";
+}
+
+function isAwaitingApproval(status: string, role?: string): boolean {
+  if (role === "provider" || role === "organization") {
+    return status === "inactive" || status === "pending";
+  }
+  return false;
+}
+
+function isUnverified(status: string): boolean {
+  return (
+    status === "inactive" || status === "unverified" || status === "pending"
+  );
+}
+
 export class AuthService {
+  // Register: create in Supabase Auth FIRST (UUID + FK), then local row
   static async register(body: any) {
+    body.email = normalizeEmail(String(body.email || ""));
+    let role = body.role || "patient";
+    if (role === "doctor") role = "provider";
+    if (role === "organizer") role = "organization";
+
+    let username = body.username;
+    if (!username || typeof username !== "string" || username.trim() === "") {
+      const base = (body.name || body.email?.split("@")[0] || "user")
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, "");
+      username = `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+
     if (await UserModel.isEmailTaken(body.email)) {
       throw {
         status: 409,
@@ -42,11 +111,19 @@ export class AuthService {
       };
     }
 
-    if (await UserModel.isPhoneTaken(body.phone)) {
+    if (body.phone && (await UserModel.isPhoneTaken(body.phone))) {
       throw {
         status: 409,
         message: "This phone number is already registered",
         code: "PHONE_EXISTS",
+      };
+    }
+
+    if (!body.password || String(body.password).length < 6) {
+      throw {
+        status: 400,
+        message: "Password must be at least 6 characters",
+        code: "WEAK_PASSWORD",
       };
     }
 
@@ -57,46 +134,46 @@ export class AuthService {
         email_confirm: true,
         user_metadata: {
           name: body.name,
-          username: body.username,
+          username,
           phone: body.phone,
+          role,
         },
       });
 
     if (authError || !authData.user) {
+      const msg = authError?.message || "Failed to create auth user";
+      if (
+        msg.toLowerCase().includes("already") ||
+        msg.toLowerCase().includes("registered")
+      ) {
+        throw {
+          status: 409,
+          message:
+            "This email still exists in authentication. Run hard-delete or clean-orphans first.",
+          code: "AUTH_EMAIL_EXISTS",
+        };
+      }
       throw {
         status: 400,
-        message: authError?.message ?? "Failed to create auth user",
+        message: msg,
         code: "AUTH_CREATE_FAILED",
       };
     }
 
     const userId = authData.user.id;
     const passwordHash = await bcrypt.hash(body.password, 10);
-    let publicUser;
 
+    let publicUser;
     try {
       publicUser = await UserModel.createFromAuth(
         userId,
-        {
-          name: body.name,
-          username: body.username,
-          email: body.email,
-          phone: body.phone,
-          address: body.address,
-          role: body.role,
-          bloodType: body.bloodType,
-          providerType: body.providerType,
-          specialization: body.specialization,
-          licenseNumber: body.licenseNumber,
-          organizationName: body.organizationName,
-          organizerType: body.organizerType,
-          licenseDocumentUrl: body.licenseDocumentUrl,
-        },
+        { ...body, role, username },
         passwordHash,
       );
     } catch (dbError) {
-      await supabaseAdmin.auth.admin.deleteUser(userId);
-
+      try {
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+      } catch (_) {}
       if (isUniqueViolation(dbError)) {
         throw {
           status: 409,
@@ -107,21 +184,30 @@ export class AuthService {
       throw dbError;
     }
 
-    const tokens = generateLocalTokens(publicUser.userId, publicUser.email);
+    const otp = createOtp();
+    storeOtp(`verify_${body.email}`, otp);
 
-    // ملاحظة: إيميل التفعيل مش بيتبعت تلقائي عند التسجيل
-    // بيتبعت فقط لما المستخدم يدوس على زرار Verify / Resend من شاشة التفعيل
+    try {
+      await EmailService.sendVerificationEmail(body.email, otp);
+    } catch (emailErr: any) {
+      console.error(
+        "[Register] Failed to send verification email:",
+        emailErr?.message,
+      );
+    }
 
     return {
       user: toPublicUser(publicUser),
-      session: tokens,
+      needsVerification: true,
+      email: body.email,
     };
   }
 
   static async login(body: { email: string; password: string }) {
-    const user = await UserModel.findByEmail(body.email);
+    const email = normalizeEmail(body.email);
 
-    if (!user || !user.passwordHash) {
+    const localUser = await UserModel.findByEmail(email);
+    if (!localUser?.passwordHash) {
       throw {
         status: 401,
         message: "Invalid email or password",
@@ -129,12 +215,8 @@ export class AuthService {
       };
     }
 
-    const isPasswordValid = await bcrypt.compare(
-      body.password,
-      user.passwordHash,
-    );
-
-    if (!isPasswordValid) {
+    const isMatch = await bcrypt.compare(body.password, localUser.passwordHash);
+    if (!isMatch) {
       throw {
         status: 401,
         message: "Invalid email or password",
@@ -142,18 +224,46 @@ export class AuthService {
       };
     }
 
-    if (user.status !== "Active") {
+    const publicUser = await UserModel.findById(localUser.userId);
+    if (!publicUser) {
+      throw {
+        status: 401,
+        message: "User profile not found",
+        code: "PROFILE_MISSING",
+      };
+    }
+
+    const status = normalizeStatus(publicUser.status);
+    const role = (publicUser.role || "").toString().toLowerCase();
+
+    if (isAwaitingApproval(status, role)) {
       throw {
         status: 403,
-        message: `Account is ${user.status.toLowerCase()}. Contact support.`,
+        message: "Your account is awaiting administrator approval.",
+        code: "ACCOUNT_PENDING",
+      };
+    }
+
+    if (!isLoginAllowed(status)) {
+      if (isUnverified(status)) {
+        throw {
+          status: 403,
+          message: "Please verify your email before signing in.",
+          code: "EMAIL_NOT_VERIFIED",
+          data: { email: publicUser.email },
+        };
+      }
+      throw {
+        status: 403,
+        message: `Account is ${status || "inactive"}. Contact support.`,
         code: "ACCOUNT_INACTIVE",
       };
     }
 
-    const tokens = generateLocalTokens(user.userId, user.email);
+    const tokens = generateLocalTokens(publicUser.userId, publicUser.email);
 
     return {
-      user: toPublicUser(user),
+      user: toPublicUser(publicUser),
       session: tokens,
     };
   }
@@ -171,9 +281,16 @@ export class AuthService {
 
     try {
       const payload: any = jwt.verify(refreshToken, secret);
+      if (payload.type !== "refresh") {
+        throw {
+          status: 401,
+          message: "Invalid refresh token type",
+          code: "INVALID_REFRESH_TOKEN",
+        };
+      }
       const user = await UserModel.findById(payload.userId);
 
-      if (!user || user.status !== "Active") {
+      if (!user || !isLoginAllowed(normalizeStatus(user.status))) {
         throw {
           status: 401,
           message: "User not found or inactive",
@@ -182,7 +299,6 @@ export class AuthService {
       }
 
       const tokens = generateLocalTokens(user.userId, user.email);
-
       return {
         user: toPublicUser(user),
         session: tokens,
@@ -198,113 +314,190 @@ export class AuthService {
   }
 
   static async forgotPassword(email: string) {
-    const user = await UserModel.findByEmail(email);
-    // لأسباب أمنية، لو الإيميل مش موجود بنرجع true بدون كشف وجود الحساب
-    if (!user) return true;
-
-    const redirectTo =
-      process.env.PASSWORD_RESET_REDIRECT_URL ??
-      `${process.env.FRONTEND_URL}/reset_password`;
-
-    // توليد رابط استعادة من Supabase Admin وبعته من Gmail بتاعنا عبر EmailService
-    const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-      type: "recovery",
-      email,
-      options: { redirectTo },
-    });
-
-    if (error || !data?.properties?.hashed_token) {
-      throw {
-        status: 500,
-        message: error?.message ?? "Failed to generate recovery token",
-        code: "RECOVERY_LINK_FAILED",
-      };
-    }
-
-    await EmailService.sendPasswordResetEmail(
-      email,
-      data.properties.hashed_token,
-    );
-
-    return true;
-  }
-
-  static async resetPassword(
-    token: string,
-    refreshToken: string,
-    newPassword: string,
-  ) {
-    if (!token) {
-      throw {
-        status: 401,
-        message: "Recovery token is required",
-        code: "MISSING_TOKEN",
-      };
-    }
-
-    const { data: sessionData, error: setError } =
-      await supabase.auth.setSession({
-        access_token: token,
-        refresh_token: refreshToken ?? "",
-      });
-
-    if (setError || !sessionData.user) {
-      throw {
-        status: 401,
-        message: "Invalid or expired recovery token",
-        code: "INVALID_RECOVERY_TOKEN",
-      };
-    }
-
-    const userId = sessionData.user.id;
-
-    const { error: updateError } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
-
-    if (updateError) {
+    email = normalizeEmail(email || "");
+    if (!email) {
       throw {
         status: 400,
-        message: updateError.message,
-        code: "PASSWORD_UPDATE_FAILED",
+        message: "Email is required",
+        code: "MISSING_EMAIL",
       };
     }
 
-    const newPasswordHash = await bcrypt.hash(newPassword, 10);
-    await UserModel.updatePasswordHash(userId, newPasswordHash);
-
+    const user = await UserModel.findByEmail(email);
+    if (user) {
+      const otp = createOtp();
+      storeOtp(`reset_${email}`, otp);
+      await EmailService.sendPasswordResetEmail(email, otp);
+    }
     return true;
   }
 
-  static async getGoogleUrl() {
-    const redirectTo =
-      process.env.GOOGLE_REDIRECT_URL ??
-      `${process.env.FRONTEND_URL}/auth/callback`;
+  static async resetPasswordWithOtp(
+    email: string,
+    otp: string,
+    newPassword: string,
+  ) {
+    email = normalizeEmail(email || "");
+    otp = String(otp || "").trim();
+    if (!email || !otp || !newPassword) {
+      throw {
+        status: 400,
+        message: "email, otp and newPassword are required",
+        code: "MISSING_FIELDS",
+      };
+    }
 
+    if (String(newPassword).length < 6) {
+      throw {
+        status: 400,
+        message: "Password must be at least 6 characters",
+        code: "WEAK_PASSWORD",
+      };
+    }
+
+    const storedCode = getValidOtp(`reset_${email}`);
+    if (!storedCode || storedCode !== otp) {
+      throw {
+        status: 400,
+        message: "Invalid or expired OTP code",
+        code: "INVALID_OTP",
+      };
+    }
+
+    const user = await UserModel.findByEmail(email);
+    if (!user) {
+      throw { status: 404, message: "User not found", code: "NOT_FOUND" };
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const updated = await UserModel.updatePasswordHash(
+      user.userId,
+      passwordHash,
+    );
+    if (!updated) {
+      throw {
+        status: 500,
+        message: "Failed to update password",
+        code: "UPDATE_FAILED",
+      };
+    }
+
+    try {
+      await supabaseAdmin.auth.admin.updateUserById(user.userId, {
+        password: newPassword,
+      });
+    } catch (e: any) {
+      console.warn(
+        "[ResetPassword] Could not sync password to Supabase Auth:",
+        e?.message,
+      );
+    }
+
+    clearOtp(`reset_${email}`);
+    return true;
+  }
+
+  static async verifyEmailOtp(email: string, otp: string) {
+    email = normalizeEmail(email || "");
+    otp = String(otp || "").trim();
+    if (!email || !otp) {
+      throw {
+        status: 400,
+        message: "email and otp are required",
+        code: "MISSING_FIELDS",
+      };
+    }
+
+    const storedCode = getValidOtp(`verify_${email}`);
+    if (!storedCode || storedCode !== otp) {
+      throw {
+        status: 400,
+        message: "Invalid or expired verification code",
+        code: "INVALID_OTP",
+      };
+    }
+
+    const user = await UserModel.findByEmail(email);
+    if (!user) {
+      throw { status: 404, message: "User not found", code: "NOT_FOUND" };
+    }
+
+    const fullUser = await UserModel.findById(user.userId);
+    const role = (fullUser?.role || "patient").toString().toLowerCase();
+
+    if (role === "patient" || !fullUser?.role) {
+      const client = await pool.connect();
+      try {
+        await client.query(
+          `UPDATE public."User" SET "status" = 'Active' WHERE "userId" = $1`,
+          [user.userId],
+        );
+      } finally {
+        client.release();
+      }
+    }
+
+    clearOtp(`verify_${email}`);
+
+    const updatedUser = await UserModel.findById(user.userId);
+    const tokens = generateLocalTokens(updatedUser.userId, updatedUser.email);
+
+    return {
+      user: toPublicUser(updatedUser),
+      session: tokens,
+      verified: true,
+    };
+  }
+
+  static async resendVerification(email: string) {
+    email = normalizeEmail(email || "");
+    if (!email) {
+      throw {
+        status: 400,
+        message: "Email is required",
+        code: "MISSING_EMAIL",
+      };
+    }
+
+    const user = await UserModel.findByEmail(email);
+    if (!user) return true;
+
+    if (normalizeStatus(user.status) === "active") {
+      return { message: "This email is already verified." };
+    }
+
+    const otp = createOtp();
+    storeOtp(`verify_${email}`, otp);
+    await EmailService.sendVerificationEmail(email, otp);
+    return true;
+  }
+
+  static async getGoogleAuthUrl() {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo,
-        queryParams: { access_type: "offline", prompt: "consent" },
+        redirectTo:
+          process.env.GOOGLE_REDIRECT_URL ||
+          "https://unsworn-upgrade-maternity.ngrok-free.dev/api/v1/auth/google/callback",
       },
     });
 
-    if (error || !data.url) {
+    if (error || !data?.url) {
       throw {
-        status: 500,
-        message: error?.message ?? "Failed to generate Google auth URL",
-        code: "OAUTH_URL_FAILED",
+        status: 400,
+        message: error?.message || "Failed to generate Google auth URL",
+        code: "GOOGLE_URL_ERROR",
       };
     }
 
     return data.url;
   }
 
-  static async googleCallback(accessToken: string, refreshToken: string) {
-    if (!accessToken || !refreshToken) {
+  static async googleCallback(accessToken: string, _refreshToken: string) {
+    if (!accessToken) {
       throw {
         status: 400,
-        message: "accessToken and refreshToken are required",
+        message: "accessToken is required",
         code: "MISSING_TOKENS",
       };
     }
@@ -324,18 +517,25 @@ export class AuthService {
     let user = await UserModel.findById(supabaseUser.id);
 
     if (!user) {
+      const email = (supabaseUser.email || "").toLowerCase();
+      if (email) {
+        const byEmail = await UserModel.findByEmail(email);
+        if (byEmail) user = await UserModel.findById(byEmail.userId);
+      }
+    }
+
+    if (!user) {
       const meta = supabaseUser.user_metadata ?? {};
       const email = supabaseUser.email ?? meta.email ?? "";
       const name =
         meta.full_name || meta.name || email.split("@")[0] || "Google User";
-      const username = (
+      let username = (
         meta.preferred_username ||
         email.split("@")[0] ||
         `user_${supabaseUser.id.slice(0, 8)}`
       )
         .replace(/[^a-zA-Z0-9_]/g, "_")
         .slice(0, 60);
-      const phone = meta.phone || `g-${supabaseUser.id.slice(0, 10)}`;
 
       let finalUsername = username;
       let attempt = 0;
@@ -352,19 +552,24 @@ export class AuthService {
           name,
           username: finalUsername,
           email,
-          phone,
+          phone: meta.phone || `g-${supabaseUser.id.slice(0, 10)}`,
           role: "patient",
         },
         defaultRandomHash,
       );
     }
 
-    if (user.status !== "Active") {
-      throw {
-        status: 403,
-        message: `Account is ${user.status.toLowerCase()}`,
-        code: "ACCOUNT_INACTIVE",
-      };
+    if (normalizeStatus(user.status) !== "active") {
+      const client = await pool.connect();
+      try {
+        await client.query(
+          `UPDATE public."User" SET "status" = 'Active' WHERE "userId" = $1`,
+          [user.userId],
+        );
+      } finally {
+        client.release();
+      }
+      user.status = "Active";
     }
 
     const tokens = generateLocalTokens(user.userId, user.email);
@@ -375,29 +580,175 @@ export class AuthService {
     };
   }
 
+  /** Delete from auth.users FIRST (CASCADE), then safety cleanup local */
   static async hardDeleteUser(email: string) {
-    const { data: listData, error: listError } =
-      await supabaseAdmin.auth.admin.listUsers();
-
-    if (listError) {
+    email = normalizeEmail(email || "");
+    if (!email) {
       throw {
         status: 400,
-        message: "Failed to list auth users",
-        code: "LIST_FAILED",
+        message: "Email is required for deletion",
+        code: "MISSING_EMAIL",
       };
     }
 
-    const authUser = listData.users.find((u) => u.email === email);
+    const localUser = await UserModel.findByEmail(email);
+    let authUserId: string | null = localUser?.userId ?? null;
 
-    if (authUser) {
-      await supabaseAdmin.auth.admin.deleteUser(authUser.id);
+    if (!authUserId) {
+      try {
+        const { data } = await supabaseAdmin.auth.admin.listUsers({
+          page: 1,
+          perPage: 1000,
+        });
+        const found = data?.users?.find(
+          (u) => normalizeEmail(u.email || "") === email,
+        );
+        if (found) authUserId = found.id;
+      } catch (e: any) {
+        console.warn("[HardDelete] listUsers failed:", e?.message);
+      }
     }
 
-    await UserModel.deleteByEmail(email);
+    if (authUserId) {
+      const { error } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
+      if (error) {
+        console.warn("[HardDelete] auth.admin.deleteUser:", error.message);
+      }
+    }
+
+    if (localUser) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`DELETE FROM public."Patient" WHERE "userId" = $1`, [
+          localUser.userId,
+        ]);
+        await client.query(
+          `DELETE FROM public."Provider" WHERE "userId" = $1`,
+          [localUser.userId],
+        );
+        await client.query(
+          `DELETE FROM public."Organization" WHERE "userId" = $1`,
+          [localUser.userId],
+        );
+        await client.query(`DELETE FROM public."Admin" WHERE "userId" = $1`, [
+          localUser.userId,
+        ]);
+        await client.query(`DELETE FROM public."User" WHERE "userId" = $1`, [
+          localUser.userId,
+        ]);
+        await client.query("COMMIT");
+      } catch (dbErr) {
+        await client.query("ROLLBACK");
+        console.error("[HardDelete] local cleanup error:", dbErr);
+      } finally {
+        client.release();
+      }
+    }
+
+    try {
+      await UserModel.deleteByEmail(email);
+    } catch (_) {}
+
+    clearOtp(`verify_${email}`);
+    clearOtp(`reset_${email}`);
 
     return {
       email,
-      deletedFromSupabase: Boolean(authUser),
+      deleted: true,
+      authUserId,
+      message: "User removed from Supabase Auth and local tables.",
+    };
+  }
+
+  static async cleanOrphanUsers() {
+    const { data: supData, error } = await supabaseAdmin.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    if (error || !supData?.users) {
+      throw {
+        status: 500,
+        message: error?.message || "Failed to fetch Supabase users",
+      };
+    }
+
+    const client = await pool.connect();
+    const localIds = new Set<string>();
+    const localEmails = new Set<string>();
+
+    try {
+      const res = await client.query(
+        `SELECT "userId", "email" FROM public."User"`,
+      );
+      for (const row of res.rows) {
+        if (row.userId) localIds.add(row.userId);
+        if (row.email) localEmails.add(normalizeEmail(row.email));
+      }
+    } finally {
+      client.release();
+    }
+
+    const deletedFromAuth: string[] = [];
+    for (const supUser of supData.users) {
+      const email = normalizeEmail(supUser.email || "");
+      const existsLocally =
+        localIds.has(supUser.id) || (email && localEmails.has(email));
+
+      if (!existsLocally) {
+        await supabaseAdmin.auth.admin.deleteUser(supUser.id);
+        deletedFromAuth.push(email || supUser.id);
+      }
+    }
+
+    const { data: supData2 } = await supabaseAdmin.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    const remainingAuthIds = new Set(
+      (supData2?.users || []).map((u) => u.id),
+    );
+
+    const client2 = await pool.connect();
+    const deletedFromLocal: string[] = [];
+    try {
+      const res = await client2.query(
+        `SELECT "userId", "email" FROM public."User"`,
+      );
+      for (const row of res.rows) {
+        if (!remainingAuthIds.has(row.userId)) {
+          await client2.query(
+            `DELETE FROM public."Patient" WHERE "userId" = $1`,
+            [row.userId],
+          );
+          await client2.query(
+            `DELETE FROM public."Provider" WHERE "userId" = $1`,
+            [row.userId],
+          );
+          await client2.query(
+            `DELETE FROM public."Organization" WHERE "userId" = $1`,
+            [row.userId],
+          );
+          await client2.query(
+            `DELETE FROM public."Admin" WHERE "userId" = $1`,
+            [row.userId],
+          );
+          await client2.query(
+            `DELETE FROM public."User" WHERE "userId" = $1`,
+            [row.userId],
+          );
+          deletedFromLocal.push(row.email || row.userId);
+        }
+      }
+    } finally {
+      client2.release();
+    }
+
+    return {
+      deletedFromAuth: deletedFromAuth.length,
+      deletedFromLocal: deletedFromLocal.length,
+      deletedAuthUsers: deletedFromAuth,
+      deletedLocalUsers: deletedFromLocal,
     };
   }
 }

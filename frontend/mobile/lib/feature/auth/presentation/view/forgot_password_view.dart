@@ -45,7 +45,7 @@ class _ForgotPasswordViewState extends State<ForgotPasswordView> {
           );
           Navigator.pushNamed(
             context,
-            '/email_verification',
+            '/reset_password',
             arguments: state.email,
           );
         } else if (state is AuthError) {
