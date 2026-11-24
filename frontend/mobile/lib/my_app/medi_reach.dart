@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/services/deep_link_service.dart';
 import '../feature/auth/data/auth_repository.dart';
@@ -26,18 +28,32 @@ class Medireach extends StatefulWidget {
 }
 
 class _MedireachState extends State<Medireach> {
-  /// مفتاح التنقل العام عشان نقدر نروح لأي شاشة من الـ Deep Link
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  StreamSubscription<AuthState>? _authSubscription;
 
   @override
   void initState() {
     super.initState();
     DeepLinkService.instance.onLink = _handleDeepLink;
+
+    // مراقب حالة تسجيل الدخول
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((
+      data,
+    ) {
+      final session = data.session;
+      if (session != null && mounted) {
+        final nav = _navigatorKey.currentState;
+        if (nav != null) {
+          debugPrint('Auth State Change: User logged in -> ${session.user.id}');
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
     DeepLinkService.instance.onLink = null;
+    _authSubscription?.cancel();
     super.dispose();
   }
 
@@ -45,7 +61,6 @@ class _MedireachState extends State<Medireach> {
     final parsed = DeepLinkService.parse(uri);
     if (parsed == null) return;
 
-    // نستنى الـ navigator يبقى جاهز
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final nav = _navigatorKey.currentState;
       if (nav == null) return;
@@ -76,7 +91,6 @@ class _MedireachState extends State<Medireach> {
           fontFamily: "Inter",
           scaffoldBackgroundColor: Colors.white,
         ),
-        // تم حذف الـ home: وزيادة المسارات في الـ routes و onGenerateRoute لمنع التضارب نهائياً
         onGenerateRoute: (settings) {
           final name = settings.name ?? '';
           final query = _parseQuery(name);

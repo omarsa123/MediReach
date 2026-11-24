@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
 import '../../widgets/auth_app_bar.dart';
@@ -60,23 +60,27 @@ class _PatientLoginViewState extends State<PatientLoginView> {
   }
 
   Future<void> _onGooglePressed() async {
-    final url = await context.read<AuthCubit>().getGoogleAuthUrl();
-    if (!mounted || url == null) return;
-
-    final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('The Google sign-in link is invalid.')),
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'medreach://auth', // متطابق مع الـ Manifest و Supabase
+        authScreenLaunchMode: LaunchMode.externalApplication,
       );
-      return;
-    }
-
-    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!mounted) return;
-
-    if (!opened) {
+    } on AuthException catch (error) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open Google sign-in.')),
+        SnackBar(
+          content: Text('Google Login Error: ${error.message}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unexpected Error: $error'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }

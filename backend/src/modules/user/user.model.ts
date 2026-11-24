@@ -12,16 +12,28 @@ export interface RegisterInput {
   address?: string;
   role: UserRole;
 
-  // بيانات إضافية حسب الدور
+  // Patient
   birthDate?: string;
   gender?: string;
   bloodType?: string;
+  allergies?: string;
+  medicalHistory?: string;
+
+  // Provider
   providerType?: string;
   specialization?: string;
   licenseNumber?: string;
+  qualification?: string;
+  experienceYears?: number;
+
+  // Organization
   organizationName?: string;
   organizerType?: "Clinic" | "Hospital" | "Lab" | "PhysiotherapyCenter";
   licenseDocumentUrl?: string;
+  description?: string;
+  latitude?: number;
+  longitude?: number;
+  logoUrl?: string;
 }
 
 export interface UpdateProfileInput {
@@ -97,10 +109,18 @@ export class UserModel {
     switch (role) {
       case "patient":
         await client.query(
-          `INSERT INTO public."Patient" ("userId", "bloodType")
-           VALUES ($1, $2)
+          `INSERT INTO public."Patient"
+            ("userId", "bloodType", "birthDate", "gender", "allergies", "medicalHistory")
+           VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT ("userId") DO NOTHING`,
-          [userId, data.bloodType || "Unknown"],
+          [
+            userId,
+            data.bloodType || "Unknown",
+            data.birthDate || null,
+            data.gender || null,
+            data.allergies || null,
+            data.medicalHistory || null,
+          ],
         );
         break;
 
@@ -108,14 +128,17 @@ export class UserModel {
         await client.query(
           `INSERT INTO public."Provider"
             ("userId", "providerType", "specialization", "licenseNumber",
-             "experienceYears", "verificationStatus", "profilePictureUrl")
-           VALUES ($1, $2, $3, $4, 0, 'Pending', 'https://example.com/default-avatar.png')
+             "qualification", "experienceYears", "verificationStatus", "profilePictureUrl")
+           VALUES ($1, $2, $3, $4, $5, $6, 'Pending', $7)
            ON CONFLICT ("userId") DO NOTHING`,
           [
             userId,
             data.providerType || "Doctor",
             data.specialization || "Other",
             data.licenseNumber || `TEMP-${userId.slice(0, 8)}`,
+            data.qualification || null,
+            data.experienceYears ?? 0,
+            "https://example.com/default-avatar.png",
           ],
         );
         break;
@@ -124,8 +147,9 @@ export class UserModel {
         await client.query(
           `INSERT INTO public."Organization"
             ("userId", "organizationName", "organizerType", "address",
-             "verificationStatus", "licenseDocumentUrl")
-           VALUES ($1, $2, $3, $4, 'Pending', $5)
+             "verificationStatus", "licenseDocumentUrl", "description",
+             "latitude", "longitude", "logoUrl")
+           VALUES ($1, $2, $3, $4, 'Pending', $5, $6, $7, $8, $9)
            ON CONFLICT ("userId") DO NOTHING`,
           [
             userId,
@@ -134,6 +158,10 @@ export class UserModel {
             data.address || "Pending Address",
             data.licenseDocumentUrl ||
               "https://example.com/pending-license.pdf",
+            data.description || null,
+            data.latitude ?? null,
+            data.longitude ?? null,
+            data.logoUrl || null,
           ],
         );
         break;
@@ -157,61 +185,33 @@ export class UserModel {
     }
   }
 
-  // البحث بالـ ID مع استرجاع الـ role والبيانات المرتبطة
+  // البحث بالـ ID مع استرجاع الـ role والبيانات المرتبطة — كويري واحدة فقط
   static async findById(userId: string) {
     const result = await pool.query(
       `SELECT
-         "userId", "name", "username", "email", "phone",
-         "address", "profilePictureUrl", "createdAt", "status"
-       FROM public."User"
-       WHERE "userId" = $1`,
+         u."userId", u."name", u."username", u."email", u."phone",
+         u."address", u."profilePictureUrl", u."createdAt", u."status",
+         CASE
+           WHEN pr."userId" IS NOT NULL THEN 'provider'
+           WHEN o."userId"  IS NOT NULL THEN 'organization'
+           WHEN a."userId"  IS NOT NULL THEN 'admin'
+           ELSE 'patient'
+         END AS role,
+         p."bloodType",
+         pr."providerType", pr."specialization", pr."licenseNumber",
+         o."organizationName", o."organizerType"
+       FROM public."User" u
+       LEFT JOIN public."Patient"      p  ON p."userId"  = u."userId"
+       LEFT JOIN public."Provider"     pr ON pr."userId" = u."userId"
+       LEFT JOIN public."Organization" o  ON o."userId"  = u."userId"
+       LEFT JOIN public."Admin"        a  ON a."userId"  = u."userId"
+       WHERE u."userId" = $1
+       LIMIT 1`,
       [userId],
     );
 
     if (result.rows.length === 0) return null;
-    const user = result.rows[0];
-
-    try {
-      const [patientRes, providerRes, orgRes, adminRes] = await Promise.all([
-        pool.query(
-          `SELECT "bloodType" FROM public."Patient" WHERE "userId" = $1 LIMIT 1`,
-          [userId],
-        ),
-        pool.query(
-          `SELECT "providerType", "specialization", "licenseNumber" FROM public."Provider" WHERE "userId" = $1 LIMIT 1`,
-          [userId],
-        ),
-        pool.query(
-          `SELECT "organizationName", "organizerType" FROM public."Organization" WHERE "userId" = $1 LIMIT 1`,
-          [userId],
-        ),
-        pool.query(`SELECT 1 FROM public."Admin" WHERE "userId" = $1 LIMIT 1`, [
-          userId,
-        ]),
-      ]);
-
-      if (providerRes.rows.length > 0) {
-        user.role = "provider";
-        user.specialization = providerRes.rows[0].specialization;
-        user.providerType = providerRes.rows[0].providerType;
-        user.licenseNumber = providerRes.rows[0].licenseNumber;
-      } else if (orgRes.rows.length > 0) {
-        user.role = "organization";
-        user.organizationName = orgRes.rows[0].organizationName;
-        user.organizerType = orgRes.rows[0].organizerType;
-      } else if (adminRes.rows.length > 0) {
-        user.role = "admin";
-      } else {
-        user.role = "patient";
-        if (patientRes.rows.length > 0) {
-          user.bloodType = patientRes.rows[0].bloodType;
-        }
-      }
-    } catch {
-      user.role = user.role || "patient";
-    }
-
-    return user;
+    return result.rows[0];
   }
 
   // تحديث البروفايل

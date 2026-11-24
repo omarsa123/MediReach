@@ -88,5 +88,5 @@ Content-Type: application/json
 }
 
 
-### Clean Orphans Quick (No Auth)
-POST http://localhost:5050/api/v1/auth/clean-orphans-quick
+### Wipe Everything Direct
+POST http://localhost:5050/api/v1/wipe-everything-now

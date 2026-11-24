@@ -21,6 +21,10 @@ const getJwtSecret = (): string => {
   return secret;
 };
 
+/**
+ * Local JWT only — same shape for email/password and Google flows.
+ * Frontend AuthSessionModel expects: accessToken, refreshToken, expiresIn, tokenType
+ */
 export const generateLocalTokens = (userId: string, email: string) => {
   const secret = getJwtSecret();
   const accessToken = jwt.sign({ userId, email }, secret, { expiresIn: "1h" });
@@ -88,7 +92,12 @@ function isUnverified(status: string): boolean {
 }
 
 export class AuthService {
-  // Register: create in Supabase Auth FIRST (UUID + FK), then local row
+  /**
+   * Register: create in Supabase Auth FIRST (UUID + keep FK/data consistency),
+   * then local row with the SAME userId.
+   * This keeps existing uploaded data and any FK to auth.users working.
+   * Login / tokens remain fully local (bcrypt + our JWT).
+   */
   static async register(body: any) {
     body.email = normalizeEmail(String(body.email || ""));
     let role = body.role || "patient";
@@ -127,8 +136,12 @@ export class AuthService {
       };
     }
 
-    const { data: authData, error: authError } =
-      await supabaseAdmin.auth.admin.createUser({
+    // Supabase Auth فقط لتوليد UUID والحفاظ على توافق الداتا الحالية / FK
+    // نضيف timeout عشان ما يعلقش الـ request لو Supabase بطيء
+    let authData: any = null;
+    let authError: any = null;
+    try {
+      const createPromise = supabaseAdmin.auth.admin.createUser({
         email: body.email,
         password: body.password,
         email_confirm: true,
@@ -139,8 +152,26 @@ export class AuthService {
           role,
         },
       });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Supabase createUser timed out after 12s")),
+          12000,
+        ),
+      );
+      const result: any = await Promise.race([createPromise, timeoutPromise]);
+      authData = result.data;
+      authError = result.error;
+    } catch (timeoutOrNetErr: any) {
+      throw {
+        status: 504,
+        message:
+          timeoutOrNetErr?.message ||
+          "Authentication service timeout. Check SUPABASE_SERVICE_ROLE_KEY and network.",
+        code: "AUTH_TIMEOUT",
+      };
+    }
 
-    if (authError || !authData.user) {
+    if (authError || !authData?.user) {
       const msg = authError?.message || "Failed to create auth user";
       if (
         msg.toLowerCase().includes("already") ||
@@ -171,6 +202,7 @@ export class AuthService {
         passwordHash,
       );
     } catch (dbError) {
+      // rollback auth user if local insert fails
       try {
         await supabaseAdmin.auth.admin.deleteUser(userId);
       } catch (_) {}
@@ -382,6 +414,7 @@ export class AuthService {
       };
     }
 
+    // Sync password to Supabase Auth (same UUID) so Google / Auth stay consistent
     try {
       await supabaseAdmin.auth.admin.updateUserById(user.userId, {
         password: newPassword,
@@ -425,6 +458,7 @@ export class AuthService {
     const fullUser = await UserModel.findById(user.userId);
     const role = (fullUser?.role || "patient").toString().toLowerCase();
 
+    // Patients become Active after OTP; providers stay pending approval
     if (role === "patient" || !fullUser?.role) {
       const client = await pool.connect();
       try {
@@ -479,6 +513,7 @@ export class AuthService {
         redirectTo:
           process.env.GOOGLE_REDIRECT_URL ||
           "https://unsworn-upgrade-maternity.ngrok-free.dev/api/v1/auth/google/callback",
+        skipBrowserRedirect: true,
       },
     });
 
@@ -493,6 +528,10 @@ export class AuthService {
     return data.url;
   }
 
+  /**
+   * Google path: verify Supabase token once, then issue LOCAL JWTs.
+   * Same userId (Supabase UUID) so existing rows stay linked.
+   */
   static async googleCallback(accessToken: string, _refreshToken: string) {
     if (!accessToken) {
       throw {
@@ -559,19 +598,27 @@ export class AuthService {
       );
     }
 
-    if (normalizeStatus(user.status) !== "active") {
-      const client = await pool.connect();
-      try {
-        await client.query(
-          `UPDATE public."User" SET "status" = 'Active' WHERE "userId" = $1`,
-          [user.userId],
-        );
-      } finally {
-        client.release();
+    // لا ننشط حسابات Provider/Organization تلقائياً — لازم اعتماد الأدمن
+    const role = (user.role || "patient").toString().toLowerCase();
+    const currentStatus = normalizeStatus(user.status);
+
+    if (currentStatus !== "active") {
+      if (role === "patient" || role === "admin") {
+        const client = await pool.connect();
+        try {
+          await client.query(
+            `UPDATE public."User" SET "status" = 'Active' WHERE "userId" = $1`,
+            [user.userId],
+          );
+          user.status = "Active";
+        } finally {
+          client.release();
+        }
       }
-      user.status = "Active";
+      // provider / organization يظلوا Inactive/Pending لحد ما الأدمن يعتمدهم
     }
 
+    // Always return LOCAL JWT (never the raw Supabase access token to the app)
     const tokens = generateLocalTokens(user.userId, user.email);
 
     return {
@@ -580,7 +627,16 @@ export class AuthService {
     };
   }
 
-  /** Delete from auth.users FIRST (CASCADE), then safety cleanup local */
+  /**
+   * Hard delete — الحل الصحيح لمشكلة "اتمسح من الجداول والـ UUID فضل في auth.users"
+   *
+   * الترتيب:
+   * 1) امسح من auth.users (Supabase Admin)
+   * 2) امسح جداول الأدوار + User محلياً
+   *
+   * Trigger مش مطلوب: الاستدعاء لـ Admin API أسهل وأأمن من الكود.
+   * استخدم endpoint ده دايماً لما تمسح مستخدم (مش DELETE محلي لوحده).
+   */
   static async hardDeleteUser(email: string) {
     email = normalizeEmail(email || "");
     if (!email) {
@@ -594,6 +650,7 @@ export class AuthService {
     const localUser = await UserModel.findByEmail(email);
     let authUserId: string | null = localUser?.userId ?? null;
 
+    // لو مفيش صف محلي، دور في auth.users بالإيميل (orphan)
     if (!authUserId) {
       try {
         const { data } = await supabaseAdmin.auth.admin.listUsers({
@@ -609,6 +666,7 @@ export class AuthService {
       }
     }
 
+    // 1) Auth أولاً
     if (authUserId) {
       const { error } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
       if (error) {
@@ -616,39 +674,63 @@ export class AuthService {
       }
     }
 
+    // 2) الجداول المحلية (بترتيب يحترم ON DELETE RESTRICT)
     if (localUser) {
       const client = await pool.connect();
+      const uid = localUser.userId;
       try {
         await client.query("BEGIN");
+
+        // احذف البيانات المرتبطة أولاً (المواعيد / الخدمات / الملاحظات...)
+        // لو الجدول مش موجود بيتجاهل الخطأ
+        const dependentDeletes = [
+          `DELETE FROM public."Appointment" WHERE "patientId" = $1 OR "providerId" = $1`,
+          `DELETE FROM public."MedicalNote" WHERE "patientId" = $1 OR "providerId" = $1`,
+          `DELETE FROM public."Service" WHERE "organizationId" = $1 OR "providerId" = $1`,
+          `DELETE FROM public."OrganizationProvider" WHERE "organizationId" = $1 OR "providerId" = $1`,
+          `DELETE FROM public."Review" WHERE "patientId" = $1 OR "providerId" = $1`,
+        ];
+        for (const sql of dependentDeletes) {
+          try {
+            await client.query(sql, [uid]);
+          } catch (e: any) {
+            // جدول مش موجود أو عمود مختلف — نتجاهل ونكمل
+            if (!e?.message?.includes("does not exist")) {
+              console.warn("[HardDelete] dependent delete:", e?.message);
+            }
+          }
+        }
+
         await client.query(`DELETE FROM public."Patient" WHERE "userId" = $1`, [
-          localUser.userId,
+          uid,
         ]);
         await client.query(
           `DELETE FROM public."Provider" WHERE "userId" = $1`,
-          [localUser.userId],
+          [uid],
         );
         await client.query(
           `DELETE FROM public."Organization" WHERE "userId" = $1`,
-          [localUser.userId],
+          [uid],
         );
         await client.query(`DELETE FROM public."Admin" WHERE "userId" = $1`, [
-          localUser.userId,
+          uid,
         ]);
         await client.query(`DELETE FROM public."User" WHERE "userId" = $1`, [
-          localUser.userId,
+          uid,
         ]);
         await client.query("COMMIT");
       } catch (dbErr) {
         await client.query("ROLLBACK");
         console.error("[HardDelete] local cleanup error:", dbErr);
+        throw {
+          status: 500,
+          message: "Failed to delete local user data",
+          code: "DELETE_FAILED",
+        };
       } finally {
         client.release();
       }
     }
-
-    try {
-      await UserModel.deleteByEmail(email);
-    } catch (_) {}
 
     clearOtp(`verify_${email}`);
     clearOtp(`reset_${email}`);
@@ -661,6 +743,11 @@ export class AuthService {
     };
   }
 
+  /**
+   * ينظف:
+   * - صفوف في auth.users مفيش ليها user محلي
+   * - صفوف محلية userId بتاعها مش موجود في auth.users
+   */
   static async cleanOrphanUsers() {
     const { data: supData, error } = await supabaseAdmin.auth.admin.listUsers({
       page: 1,
@@ -705,9 +792,7 @@ export class AuthService {
       page: 1,
       perPage: 1000,
     });
-    const remainingAuthIds = new Set(
-      (supData2?.users || []).map((u) => u.id),
-    );
+    const remainingAuthIds = new Set((supData2?.users || []).map((u) => u.id));
 
     const client2 = await pool.connect();
     const deletedFromLocal: string[] = [];
@@ -733,10 +818,9 @@ export class AuthService {
             `DELETE FROM public."Admin" WHERE "userId" = $1`,
             [row.userId],
           );
-          await client2.query(
-            `DELETE FROM public."User" WHERE "userId" = $1`,
-            [row.userId],
-          );
+          await client2.query(`DELETE FROM public."User" WHERE "userId" = $1`, [
+            row.userId,
+          ]);
           deletedFromLocal.push(row.email || row.userId);
         }
       }

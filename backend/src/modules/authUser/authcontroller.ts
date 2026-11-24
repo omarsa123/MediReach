@@ -37,6 +37,14 @@ export class AuthController {
     },
   );
 
+  // Google Auth URL (frontend calls GET /api/v1/auth/google-url)
+  static getGoogleAuthUrl = catchAsync(
+    async (_req: Request, res: Response): Promise<void> => {
+      const url = await AuthService.getGoogleAuthUrl();
+      res.json(successResponse({ url }, "Google auth URL generated"));
+    },
+  );
+
   // 3. Logout
   static logout = catchAsync(
     async (_req: Request, res: Response): Promise<void> => {
@@ -149,25 +157,62 @@ export class AuthController {
     },
   );
 
-  static getGoogleAuthUrl = catchAsync(
-    async (_req: Request, res: Response): Promise<void> => {
-      const url = await AuthService.getGoogleAuthUrl();
-      res.json(successResponse({ url }, "Google URL generated"));
-    },
-  );
-
   // 12. Google Callback
+  // 12. Google Callback (Supports both API POST and Browser Redirect)
   static googleCallback = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const { accessToken, refreshToken } = req.body;
+      // دعم الاستقبال من الـ Body أو الـ Query Parameters (الراجعة من توجيه جوجل)
+      const accessToken =
+        req.body.accessToken || req.query.access_token || req.query.accessToken;
+      const refreshToken =
+        req.body.refreshToken ||
+        req.query.refresh_token ||
+        req.query.refreshToken;
+
+      if (!accessToken) {
+        res
+          .status(400)
+          .json(errorResponse("accessToken is required", "MISSING_TOKENS"));
+        return;
+      }
+
       const result = await AuthService.googleCallback(
-        accessToken,
-        refreshToken,
+        String(accessToken),
+        String(refreshToken || ""),
       );
+
+      // لو الطلب جاي من بروزر (عشان نرجع جوه التطبيق)
+      if (req.method === "GET" || req.query.mobile === "true") {
+        const scheme = (process.env.APP_DEEP_LINK_SCHEME || "medreach").replace(
+          /:\/\/$/,
+          "",
+        );
+        const deepLink = `${scheme}://auth/success?accessToken=${result.session.accessToken}&refreshToken=${result.session.refreshToken}`;
+
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.send(`<!DOCTYPE html>
+        <html lang="ar" dir="rtl">
+        <head>
+          <meta charset="utf-8" />
+          <title>تسجيل الدخول - MedReach</title>
+          <script>
+            window.location.href = ${JSON.stringify(deepLink)};
+            setTimeout(function() {
+              window.close();
+            }, 1000);
+          </script>
+        </head>
+        <body style="font-family:Arial;text-align:center;padding-top:50px;">
+          <h2>تم تسجيل الدخول بنجاح! جاري العودة للتطبيق...</h2>
+          <a href="${deepLink}" style="display:inline-block;padding:10px 20px;background:#0d9488;color:#fff;text-decoration:none;border-radius:8px;margin-top:20px;">اضغط هنا للعودة للتطبيق</a>
+        </body>
+        </html>`);
+        return;
+      }
+
       res.json(successResponse(result, "Google authentication successful"));
     },
   );
-
   /**
    * 13. Open App from Email Link
    * GET /api/v1/auth/open-app?type=verify|reset&email=...&otp=...
