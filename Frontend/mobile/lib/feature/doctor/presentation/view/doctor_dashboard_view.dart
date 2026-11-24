@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../feature/auth/presentation/cubit/auth_cubit.dart';
+import '../../../../feature/auth/presentation/cubit/auth_state.dart';
 import '../../data/models/appointment_model.dart';
 import '../../widgets/appointment_card.dart';
 import '../../widgets/dashboard_header.dart';
@@ -40,18 +43,55 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
     ),
   ];
 
+  void _confirmSignOut() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              context.read<AuthCubit>().logout();
+              Navigator.pushNamedAndRemoveUntil(
+                context,
+                '/doctor_login',
+                (route) => false,
+              );
+            },
+            child: const Text('Sign out', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final authState = context.watch<AuthCubit>().state;
+    String doctorName = 'Dr. Sarah Johnson';
+    if (authState is AuthAuthenticated) {
+      doctorName = authState.user.name.startsWith('Dr.')
+          ? authState.user.name
+          : 'Dr. ${authState.user.name}';
+    }
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
           children: [
-            const DashboardHeader(),
+            DashboardHeader(onBellTap: _confirmSignOut),
             const SizedBox(height: 24),
-            const WelcomeBanner(
-              doctorName: 'Dr. Sarah Johnson',
+            WelcomeBanner(
+              doctorName: doctorName,
+              onBellTap: _confirmSignOut,
               // imagePath: AppAssets.doctorImage,
             ),
             const SizedBox(height: 24),
@@ -124,7 +164,13 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
       ),
       bottomNavigationBar: DoctorBottomNav(
         currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
+        onTap: (i) {
+          if (i == 4) {
+            _confirmSignOut();
+          } else {
+            setState(() => _currentIndex = i);
+          }
+        },
       ),
     );
   }

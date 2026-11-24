@@ -24,7 +24,7 @@ class UserAvatar extends StatelessWidget {
             : Image.asset(
                 imagePath!,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => fallback,
+                errorBuilder: (_, _, _) => fallback,
               ),
       ),
     );

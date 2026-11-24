@@ -1,5 +1,6 @@
-import 'package:MediReach/core/constants/app_assets.dart';
 import 'package:flutter/material.dart';
+import '../../../core/constants/app_assets.dart';
+
 import '../../../core/constants/app_colors.dart';
 
 class DashboardHeader extends StatelessWidget {
@@ -12,11 +13,11 @@ class DashboardHeader extends StatelessWidget {
     return Row(
       children: [
         Image.asset(
-          AppAssets.imgPath + "icon.png",
+          "${AppAssets.imgPath}icon.png",
           width: 24,
           height: 24,
           fit: BoxFit.contain,
-          color: AppColors.dashAccent, 
+          color: AppColors.dashAccent,
         ),
         const SizedBox(width: 10),
         const Text(
@@ -32,8 +33,11 @@ class DashboardHeader extends StatelessWidget {
           onPressed: onBellTap,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
-          icon: const Icon(Icons.notifications_none,
-              size: 26, color: AppColors.dashAccent),
+          icon: const Icon(
+            Icons.notifications_none,
+            size: 26,
+            color: AppColors.dashAccent,
+          ),
         ),
       ],
     );

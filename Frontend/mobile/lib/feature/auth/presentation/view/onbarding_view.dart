@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:MediReach/core/constants/app_colors.dart';
-import 'package:MediReach/core/constants/app_fonts.dart';
-import 'package:MediReach/feature/auth/widgets/onboarding_page.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_fonts.dart';
+import '../../../../feature/auth/widgets/onboarding_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class OnbardingView extends StatefulWidget {
