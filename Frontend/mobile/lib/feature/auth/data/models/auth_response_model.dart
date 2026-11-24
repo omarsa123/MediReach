@@ -1,5 +1,6 @@
+import 'package:medireach/feature/auth/data/models/auth_session_model.dart';
+
 import 'user_model.dart';
-import 'auth_session_model.dart';
 
 class AuthResponseModel {
   final bool success;
@@ -19,20 +20,43 @@ class AuthResponseModel {
     AuthSessionModel? session;
 
     final data = json['data'];
-    if (data is Map<String, dynamic>) {
-      if (data['user'] is Map<String, dynamic>) {
-        user = UserModel.fromJson(data['user'] as Map<String, dynamic>);
-      } else if (data['userId'] != null || data['id'] != null) {
-        user = UserModel.fromJson(data);
+
+    if (data is Map) {
+      final dataMap = Map<String, dynamic>.from(data);
+
+      final userData = dataMap['user'] ?? json['user'];
+
+      if (userData is Map) {
+        user = UserModel.fromJson(
+          Map<String, dynamic>.from(userData),
+        );
+      } else if (dataMap['userId'] != null ||
+          dataMap['id'] != null) {
+        user = UserModel.fromJson(dataMap);
       }
 
-      if (data['session'] is Map<String, dynamic>) {
-        session = AuthSessionModel.fromJson(data['session'] as Map<String, dynamic>);
+      final sessionData = dataMap['session'] ?? json['session'];
+
+      if (sessionData is Map) {
+        session = AuthSessionModel.fromJson(
+          Map<String, dynamic>.from(sessionData),
+        );
       }
-    } else if (json['user'] is Map<String, dynamic>) {
-      user = UserModel.fromJson(json['user'] as Map<String, dynamic>);
-      if (json['session'] is Map<String, dynamic>) {
-        session = AuthSessionModel.fromJson(json['session'] as Map<String, dynamic>);
+    } else {
+      final userData = json['user'];
+
+      if (userData is Map) {
+        user = UserModel.fromJson(
+          Map<String, dynamic>.from(userData),
+        );
+      }
+
+      final sessionData = json['session'];
+
+      if (sessionData is Map) {
+        session = AuthSessionModel.fromJson(
+          Map<String, dynamic>.from(sessionData),
+        );
       }
     }
 

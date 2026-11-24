@@ -60,7 +60,7 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
               context.read<AuthCubit>().logout();
               Navigator.pushNamedAndRemoveUntil(
                 context,
-                '/doctor_login',
+                '/provider_login',
                 (route) => false,
               );
             },

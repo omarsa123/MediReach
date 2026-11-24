@@ -1,3 +1,5 @@
+import 'package:medireach/feature/auth/data/models/auth_session_model.dart';
+
 import '../../../core/network/api_client.dart';
 import 'models/auth_response_model.dart';
 import 'models/user_model.dart';
@@ -12,15 +14,18 @@ abstract class AuthRemoteDataSource {
   Future<void> logout([String? accessToken]);
 
   Future<void> forgotPassword(String email);
+Future<void> verifyResetOtp({
+  required String email,
+  required String otp,
+});
 
-  Future<void> resetPassword({
-    required String email,
-    required String otp,
-    required String newPassword,
-  });
+Future<void> resetPassword({
+  required String email,
+  required String otp,
+  required String newPassword,
+});
 
   Future<void> verifyEmail({required String email, required String otp});
-
   Future<void> resendVerification(String email);
 
   Future<UserModel> getMe(String accessToken);
@@ -31,8 +36,9 @@ abstract class AuthRemoteDataSource {
 
   Future<AuthResponseModel> googleCallback(
     String accessToken,
-    String refreshToken,
-  );
+    String refreshToken, {
+    required String expectedRole,
+  });
 }
 
 class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
@@ -119,21 +125,38 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
   }
 
   /// Reset user password.
-  @override
-  Future<void> resetPassword({
-    required String email,
-    required String otp,
-    required String newPassword,
-  }) async {
-    await _apiClient.post(
-      '/api/v1/auth/reset-password',
-      body: {
-        'email': email.trim(),
-        'otp': otp.trim(),
-        'newPassword': newPassword,
-      },
-    );
-  }
+  /// Verify password reset OTP and receive a temporary reset token.
+/// Verify password reset OTP.
+@override
+Future<void> verifyResetOtp({
+  required String email,
+  required String otp,
+}) async {
+  await _apiClient.post(
+    '/api/v1/auth/verify-reset-otp',
+    body: {
+      'email': email.trim(),
+      'otp': otp.trim(),
+    },
+  );
+}
+
+/// Reset password using email and verified OTP.
+@override
+Future<void> resetPassword({
+  required String email,
+  required String otp,
+  required String newPassword,
+}) async {
+  await _apiClient.post(
+    '/api/v1/auth/reset-password',
+    body: {
+      'email': email.trim(),
+      'otp': otp.trim(),
+      'newPassword': newPassword,
+    },
+  );
+}
 
   /// Verify email using OTP.
   @override
@@ -219,11 +242,16 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
   @override
   Future<AuthResponseModel> googleCallback(
     String accessToken,
-    String refreshToken,
-  ) async {
+    String refreshToken, {
+    required String expectedRole,
+  }) async {
     final response = await _apiClient.post(
       '/api/v1/auth/google/callback',
-      body: {'accessToken': accessToken, 'refreshToken': refreshToken},
+      body: {
+        'accessToken': accessToken,
+        'refreshToken': refreshToken,
+        'expectedRole': expectedRole,
+      },
     );
 
     return AuthResponseModel.fromJson(_toMap(response));

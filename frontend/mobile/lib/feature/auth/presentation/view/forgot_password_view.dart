@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
 import '../../widgets/auth_app_bar.dart';
+import '../../widgets/auth_snack_bar.dart';
 import '../../widgets/auth_button.dart';
 import '../../widgets/auth_header.dart';
 import '../../widgets/auth_text_field.dart';
@@ -37,24 +38,14 @@ class _ForgotPasswordViewState extends State<ForgotPasswordView> {
     return BlocConsumer<AuthCubit, AuthState>(
       listener: (context, state) {
         if (state is AuthPasswordResetEmailSent) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: AppColors.button1background,
-            ),
-          );
+          AuthSnackBar.show(context, state.message, type: AuthSnackBarType.success);
           Navigator.pushNamed(
             context,
             '/reset_password',
             arguments: state.email,
           );
         } else if (state is AuthError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red,
-            ),
-          );
+          AuthSnackBar.show(context, state.message, type: AuthSnackBarType.error);
         }
       },
       builder: (context, state) {

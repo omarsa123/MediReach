@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../widgets/auth_app_bar.dart';
+import '../../widgets/auth_snack_bar.dart';
 import '../../widgets/auth_button.dart';
 import '../../widgets/auth_header.dart';
 import '../cubit/auth_cubit.dart';
@@ -42,12 +43,7 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
   /// إرسال كود الـ OTP للبريد الإلكتروني
   void _onSendVerificationCode(String email) {
     if (email.isEmpty || email == 'yourname@email.com') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid email address.'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      AuthSnackBar.show(context, 'Please enter a valid email address.', type: AuthSnackBarType.error);
       return;
     }
     context.read<AuthCubit>().resendVerification(email);
@@ -57,22 +53,12 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
   void _onVerifyOtp(String email) {
     final otp = _otpController.text.trim();
     if (otp.isEmpty || otp.length < 4) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid verification code (OTP).'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      AuthSnackBar.show(context, 'Please enter a valid verification code (OTP).', type: AuthSnackBarType.error);
       return;
     }
 
     if (email.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Email address is missing.'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      AuthSnackBar.show(context, 'Email address is missing.', type: AuthSnackBarType.error);
       return;
     }
 
@@ -88,12 +74,7 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
     return BlocConsumer<AuthCubit, AuthState>(
       listener: (context, state) {
         if (state is AuthEmailVerificationSuccess) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: AppColors.button1background,
-            ),
-          );
+          AuthSnackBar.show(context, state.message, type: AuthSnackBarType.success);
           Navigator.pushNamedAndRemoveUntil(
             context,
             '/patient_login',
@@ -101,16 +82,9 @@ class _EmailVerificationViewState extends State<EmailVerificationView> {
           );
         } else if (state is AuthEmailResent) {
           setState(() => _linkSent = true);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: AppColors.button1background,
-            ),
-          );
+          AuthSnackBar.show(context, state.message, type: AuthSnackBarType.success);
         } else if (state is AuthError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(state.message), backgroundColor: Colors.red),
-          );
+          AuthSnackBar.show(context, state.message, type: AuthSnackBarType.error);
         }
       },
       builder: (context, state) {

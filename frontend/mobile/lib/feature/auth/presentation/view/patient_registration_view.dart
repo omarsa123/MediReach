@@ -1,8 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:image_picker/image_picker.dart';
+
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
 import '../../widgets/auth_app_bar.dart';
+import '../../widgets/auth_snack_bar.dart';
 import '../../widgets/auth_button.dart';
 import '../../widgets/auth_header.dart';
 import '../../widgets/auth_text_field.dart';
@@ -13,7 +18,8 @@ class PatientRegistrationView extends StatefulWidget {
   const PatientRegistrationView({super.key});
 
   @override
-  State<PatientRegistrationView> createState() => _PatientRegistrationViewState();
+  State<PatientRegistrationView> createState() =>
+      _PatientRegistrationViewState();
 }
 
 class _PatientRegistrationViewState extends State<PatientRegistrationView> {
@@ -25,6 +31,8 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
   final _confirmPasswordController = TextEditingController();
 
   String _countryCode = '+20';
+  File? _profileImage;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void dispose() {
@@ -36,11 +44,30 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
     super.dispose();
   }
 
+  Future<void> _pickImage() async {
+    try {
+      final XFile? picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+      if (picked != null && mounted) {
+        setState(() => _profileImage = File(picked.path));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      AuthSnackBar.show(context, 'Could not pick image. Please try again.', type: AuthSnackBarType.error);
+    }
+  }
+
   void _onCreateAccount() {
     if (_formKey.currentState?.validate() ?? false) {
-      final cleanPhone = _phoneController.text.trim().replaceFirst(RegExp(r'^0+'), '');
+      final cleanPhone =
+          _phoneController.text.trim().replaceFirst(RegExp(r'^0+'), '');
       final fullPhone = '$_countryCode$cleanPhone';
 
+      // profile image is local only for now (no backend upload change)
       context.read<AuthCubit>().registerPatient(
             name: _fullNameController.text.trim(),
             email: _emailController.text.trim(),
@@ -63,12 +90,7 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
         } else if (state is AuthAuthenticated) {
           Navigator.pushReplacementNamed(context, '/patient_login');
         } else if (state is AuthError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red,
-            ),
-          );
+          AuthSnackBar.show(context, state.message, type: AuthSnackBarType.error);
         }
       },
       builder: (context, state) {
@@ -106,6 +128,75 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
                         fontSize: 13,
                         color: AppColors.secondary,
                         fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Center(
+                      child: Column(
+                        children: [
+                          GestureDetector(
+                            onTap: _pickImage,
+                            child: Stack(
+                              children: [
+                                Container(
+                                  width: 100,
+                                  height: 100,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: const Color(0xFFF1F5F9),
+                                    border: Border.all(
+                                      color: AppColors.inputBorder,
+                                      width: 1.5,
+                                    ),
+                                    image: _profileImage != null
+                                        ? DecorationImage(
+                                            image: FileImage(_profileImage!),
+                                            fit: BoxFit.cover,
+                                          )
+                                        : null,
+                                  ),
+                                  child: _profileImage == null
+                                      ? const Icon(
+                                          Icons.person_outline_rounded,
+                                          size: 42,
+                                          color: Color(0xFF94A3B8),
+                                        )
+                                      : null,
+                                ),
+                                Positioned(
+                                  bottom: 0,
+                                  right: 0,
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.button1background,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: Colors.white, width: 2),
+                                    ),
+                                    child: const Icon(
+                                      Icons.camera_alt_rounded,
+                                      size: 16,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _profileImage == null
+                                ? 'Add profile photo'
+                                : 'Change profile photo',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.button1background,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 20),

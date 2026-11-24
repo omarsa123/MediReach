@@ -332,6 +332,37 @@ export class AuthService {
     return true;
   }
 
+  // Verifies the reset OTP without consuming it. The same OTP is then
+  // submitted to resetPasswordWithOtp together with the new password.
+  static async verifyResetPasswordOtp(email: string, otp: string) {
+    email = normalizeEmail(email || "");
+    otp = String(otp || "").trim();
+
+    if (!email || !otp) {
+      throw {
+        status: 400,
+        message: "email and otp are required",
+        code: "MISSING_FIELDS",
+      };
+    }
+
+    const storedCode = getValidOtp(`reset_${email}`);
+    if (!storedCode || storedCode !== otp) {
+      throw {
+        status: 400,
+        message: "Invalid or expired OTP code",
+        code: "INVALID_OTP",
+      };
+    }
+
+    const user = await UserModel.findByEmail(email);
+    if (!user) {
+      throw { status: 404, message: "User not found", code: "NOT_FOUND" };
+    }
+
+    return { verified: true, email };
+  }
+
   static async resetPasswordWithOtp(
     email: string,
     otp: string,
@@ -472,13 +503,28 @@ export class AuthService {
     return true;
   }
 
-  static async getGoogleAuthUrl() {
+  static async getGoogleAuthUrl(expectedRole: string = "patient") {
+    // This must be the PUBLIC backend callback URL, not the app deep link.
+    // Example: https://YOUR-NGROK-DOMAIN/api/v1/auth/google/callback
+    const redirectTo = process.env.GOOGLE_REDIRECT_URL;
+
+    if (!redirectTo) {
+      throw {
+        status: 500,
+        message: "GOOGLE_REDIRECT_URL is missing from environment variables",
+        code: "GOOGLE_REDIRECT_URL_MISSING",
+      };
+    }
+
+    const callbackUrl = new URL(redirectTo);
+    const role =
+      String(expectedRole).toLowerCase() === "provider" ? "provider" : "patient";
+    callbackUrl.searchParams.set("role", role);
+
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo:
-          process.env.GOOGLE_REDIRECT_URL ||
-          "https://unsworn-upgrade-maternity.ngrok-free.dev/api/v1/auth/google/callback",
+        redirectTo: callbackUrl.toString(),
       },
     });
 
@@ -493,7 +539,38 @@ export class AuthService {
     return data.url;
   }
 
-  static async googleCallback(accessToken: string, _refreshToken: string) {
+  // Exchanges the OAuth authorization code using the same Supabase client
+  // that initiated signInWithOAuth (so its PKCE verifier is available).
+  static async exchangeGoogleCode(code: string) {
+    if (!code) {
+      throw {
+        status: 400,
+        message: "Google authorization code is missing",
+        code: "GOOGLE_CODE_MISSING",
+      };
+    }
+
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (error || !data.session?.access_token || !data.session.refresh_token) {
+      throw {
+        status: 401,
+        message: error?.message || "Could not exchange Google authorization code",
+        code: "GOOGLE_CODE_EXCHANGE_FAILED",
+      };
+    }
+
+    return {
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+    };
+  }
+
+  static async googleCallback(
+    accessToken: string,
+    _refreshToken: string,
+    expectedRole: string = "patient",
+  ) {
     if (!accessToken) {
       throw {
         status: 400,
@@ -514,6 +591,8 @@ export class AuthService {
     }
 
     const supabaseUser = userData.user;
+    const requestedRole =
+      String(expectedRole).toLowerCase() === "provider" ? "provider" : "patient";
     let user = await UserModel.findById(supabaseUser.id);
 
     if (!user) {
@@ -522,6 +601,15 @@ export class AuthService {
         const byEmail = await UserModel.findByEmail(email);
         if (byEmail) user = await UserModel.findById(byEmail.userId);
       }
+    }
+
+    if (!user && requestedRole === "provider") {
+      throw {
+        status: 404,
+        message:
+          "No provider account was found for this Google email. Please register as a provider first.",
+        code: "PROVIDER_ACCOUNT_NOT_FOUND",
+      };
     }
 
     if (!user) {

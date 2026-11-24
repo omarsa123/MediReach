@@ -81,6 +81,9 @@ class AuthEmailVerificationSuccess extends AuthState {
   @override
   List<Object?> get props => [message];
 }
+class AuthNetworkError extends AuthState {
+  const AuthNetworkError();
+}
 
 class AuthEmailResent extends AuthState {
   final String email;
@@ -115,4 +118,14 @@ class AuthPasswordResetSuccess extends AuthState {
 
   @override
   List<Object?> get props => [message];
+}
+class AuthResetOtpVerified extends AuthState {
+  final String email;
+
+  const AuthResetOtpVerified({
+    required this.email,
+  });
+
+  @override
+  List<Object?> get props => [email];
 }

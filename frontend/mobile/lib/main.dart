@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
-import './my_app/medi_reach.dart';
-import './core/services/deep_link_service.dart';
+
+import 'my_app/medi_reach.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // تهيئة Deep Links قبل تشغيل التطبيق
-  await DeepLinkService.instance.init();
-
   runApp(const Medireach());
 }

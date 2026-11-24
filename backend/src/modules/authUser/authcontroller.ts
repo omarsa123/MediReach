@@ -6,22 +6,18 @@ import { UserModel } from "../../modules/user/user.model.js";
 import { toPublicUser } from "../../utils/response.utils.js";
 
 export class AuthController {
-  // 1. Register
   static registerUser = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const result = await AuthService.register(req.body);
-      res
-        .status(201)
-        .json(
-          successResponse(
-            result,
-            "Account created successfully. Please verify your email with the OTP sent.",
-          ),
-        );
+      res.status(201).json(
+        successResponse(
+          result,
+          "Account created successfully. Please verify your email with the OTP sent.",
+        ),
+      );
     },
   );
 
-  // 2. Login
   static login = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const result = await AuthService.login(req.body);
@@ -29,7 +25,6 @@ export class AuthController {
     },
   );
 
-  // Clean Orphans Quick Endpoint Handler
   static cleanOrphansQuick = catchAsync(
     async (_req: Request, res: Response): Promise<void> => {
       const result = await AuthService.cleanOrphanUsers();
@@ -37,14 +32,12 @@ export class AuthController {
     },
   );
 
-  // 3. Logout
   static logout = catchAsync(
     async (_req: Request, res: Response): Promise<void> => {
       res.json(successResponse(null, "Logged out successfully"));
     },
   );
 
-  // 4. Refresh Token
   static refresh = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const result = await AuthService.refreshToken(req.body.refreshToken);
@@ -52,7 +45,6 @@ export class AuthController {
     },
   );
 
-  // 5. Forgot Password
   static forgotPassword = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       await AuthService.forgotPassword(req.body.email);
@@ -65,7 +57,6 @@ export class AuthController {
     },
   );
 
-  // 6. Reset Password (OTP)
   static resetPassword = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const { email, otp, newPassword, password } = req.body;
@@ -78,16 +69,23 @@ export class AuthController {
     },
   );
 
-  // 7. Verify Email (OTP)
+  static verifyResetOtp = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const { email, otp } = req.body;
+      const result = await AuthService.verifyResetPasswordOtp(email, otp);
+      res.json(successResponse(result, "OTP verified successfully"));
+    },
+  );
+
   static verifyEmail = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const email = req.body.email || (req.query.email as string) || undefined;
       const otp = req.body.otp || (req.query.otp as string) || undefined;
 
       if (!email || !otp) {
-        res
-          .status(400)
-          .json(errorResponse("email and otp are required", "MISSING_FIELDS"));
+        res.status(400).json(
+          errorResponse("email and otp are required", "MISSING_FIELDS"),
+        );
         return;
       }
 
@@ -96,7 +94,6 @@ export class AuthController {
     },
   );
 
-  // 8. Resend Verification
   static resendVerification = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       await AuthService.resendVerification(req.body.email);
@@ -104,7 +101,6 @@ export class AuthController {
     },
   );
 
-  // 9. Me
   static me = catchAsync(async (req: Request, res: Response): Promise<void> => {
     const user = (req as any).user;
     if (!user) {
@@ -114,19 +110,17 @@ export class AuthController {
     res.json(successResponse({ user: toPublicUser(user) }));
   });
 
-  // 10. Update Me
   static updateMe = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
       if (!user) {
-        res
-          .status(401)
-          .json(errorResponse("Not authenticated", "UNAUTHORIZED"));
+        res.status(401).json(
+          errorResponse("Not authenticated", "UNAUTHORIZED"),
+        );
         return;
       }
 
       const updated = await UserModel.updateProfile(user.userId, req.body);
-
       if (!updated) {
         res.status(404).json(errorResponse("User not found", "NOT_FOUND"));
         return;
@@ -150,28 +144,50 @@ export class AuthController {
   );
 
   static getGoogleAuthUrl = catchAsync(
-    async (_req: Request, res: Response): Promise<void> => {
-      const url = await AuthService.getGoogleAuthUrl();
+    async (req: Request, res: Response): Promise<void> => {
+      const role = String(req.query.role || "patient");
+      const url = await AuthService.getGoogleAuthUrl(role);
       res.json(successResponse({ url }, "Google URL generated"));
     },
   );
 
-  // 12. Google Callback
   static googleCallback = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const { accessToken, refreshToken } = req.body;
+      const { accessToken, refreshToken, expectedRole } = req.body;
       const result = await AuthService.googleCallback(
         accessToken,
         refreshToken,
+        expectedRole,
       );
       res.json(successResponse(result, "Google authentication successful"));
     },
   );
 
-  /**
-   * 13. Open App from Email Link
-   * GET /api/v1/auth/open-app?type=verify|reset&email=...&otp=...
-   */
+  // Supabase redirects the authorization code to this backend endpoint.
+  // The backend exchanges it, then sends the tokens to the app deep link.
+  static googleOAuthRedirect = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const code = String(req.query.code || "");
+      const role =
+        String(req.query.role || "patient").toLowerCase() === "provider"
+          ? "provider"
+          : "patient";
+
+      const tokens = await AuthService.exchangeGoogleCode(code);
+      const scheme = (process.env.APP_DEEP_LINK_SCHEME || "medreach").replace(
+        /:\/\/$/,
+        "",
+      );
+
+      const deepLink = new URL(`${scheme}://google-callback`);
+      deepLink.searchParams.set("access_token", tokens.accessToken);
+      deepLink.searchParams.set("refresh_token", tokens.refreshToken);
+      deepLink.searchParams.set("role", role);
+
+      res.redirect(deepLink.toString());
+    },
+  );
+
   static openAppFromEmail = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const type = String(req.query.type || "verify");
@@ -179,11 +195,9 @@ export class AuthController {
       const otp = String(req.query.otp || "");
 
       if (!email || !otp) {
-        res
-          .status(400)
-          .send(
-            "<h2>Invalid link</h2><p>Missing email or OTP. Please request a new email.</p>",
-          );
+        res.status(400).send(
+          "<h2>Invalid link</h2><p>Missing email or OTP. Please request a new email.</p>",
+        );
         return;
       }
 
@@ -191,9 +205,7 @@ export class AuthController {
         /:\/\/$/,
         "",
       );
-
       const path = type === "reset" ? "reset_password" : "email_verification";
-
       const deepLink = `${scheme}://${path}?email=${encodeURIComponent(
         email,
       )}&otp=${encodeURIComponent(otp)}`;

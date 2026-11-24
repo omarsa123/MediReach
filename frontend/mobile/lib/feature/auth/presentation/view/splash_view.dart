@@ -1,7 +1,7 @@
-import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+
 import '../../../../core/constants/app_assets.dart';
 import '../../../../core/constants/app_fonts.dart';
 import '../../../../core/services/user_preferences.dart';
@@ -25,44 +25,53 @@ class _SplashViewState extends State<SplashView> {
   Future<void> navigateNext() async {
     final authCubit = context.read<AuthCubit>();
 
+    // Restore user session
     try {
-      // محاولة استعادة الجلسة بمهلة زمنية قصيرة عشان الاسبلاش ما تعلّقش للأبد لو النت بطيء
-      await authCubit.restoreSession().timeout(const Duration(seconds: 4));
-    } catch (_) {
-      // لو حصل timeout أو إيرور، نتجاهله ونكمل بالطرق العادية (SharedPreferences)
+      await authCubit.restoreSession();
+    } catch (e) {
+      debugPrint('Session restoration failed: $e');
     }
+
+    // Keep splash visible for 2 seconds
+    await Future.delayed(const Duration(seconds: 2));
 
     if (!mounted) return;
 
     final authState = authCubit.state;
+
+    // 1. Check authenticated user
     if (authState is AuthAuthenticated) {
-      final role = authState.user.role.toLowerCase();
-      if (role == 'provider' || role == 'doctor') {
-        Navigator.pushReplacementNamed(context, '/doctor_dashboard');
-        return;
+      final role = authState.user.role.toLowerCase().trim();
+
+      if (role == 'provider') {
+        Navigator.pushReplacementNamed(
+          context,
+          '/doctor_dashboard',
+        );
+      } else if (role == 'patient') {
+        Navigator.pushReplacementNamed(
+          context,
+          '/patient_home',
+        );
       } else {
-        Navigator.pushReplacementNamed(context, '/patient_home');
-        return;
+        Navigator.pushReplacementNamed(
+          context,
+          '/select_role',
+        );
       }
+
+      return;
     }
 
-    // لو مفيش جلسة نشطة، نشوف الشPreferences القديمة
+    // Login is shared by every account type. Role selection happens only
+    // when the user chooses Register from the login screen.
     final isVisited = await UserPreferences.isVisited();
-    final savedRole = await UserPreferences.getRole();
-
     if (!mounted) return;
 
     if (!isVisited) {
       Navigator.pushReplacementNamed(context, '/onboarding');
-    } else if (savedRole != null) {
-      final roleLower = savedRole.toLowerCase();
-      if (roleLower == 'provider' || roleLower == 'doctor') {
-        Navigator.pushReplacementNamed(context, '/doctor_login');
-      } else {
-        Navigator.pushReplacementNamed(context, '/patient_home');
-      }
     } else {
-      Navigator.pushReplacementNamed(context, '/select_role');
+      Navigator.pushReplacementNamed(context, '/auth_login');
     }
   }
 
@@ -72,7 +81,9 @@ class _SplashViewState extends State<SplashView> {
       body: Container(
         decoration: BoxDecoration(
           image: DecorationImage(
-            image: AssetImage("${AppAssets.imgPath}splash_background.png"),
+            image: AssetImage(
+              "${AppAssets.imgPath}splash_background.png",
+            ),
             fit: BoxFit.cover,
           ),
         ),
@@ -81,19 +92,30 @@ class _SplashViewState extends State<SplashView> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset("${AppAssets.imgPath}icon.png"),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8.0),
-              child: Text("MedReach", style: AppFonts.mainTitle),
+            Image.asset(
+              "${AppAssets.imgPath}icon.png",
             ),
             Padding(
-              padding: const EdgeInsets.only(top: 6.0, bottom: 14),
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              child: Text(
+                "MedReach",
+                style: AppFonts.mainTitle,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(
+                top: 6.0,
+                bottom: 14,
+              ),
               child: Text(
                 "Your health, our priority",
                 style: AppFonts.smallSubTitle,
               ),
             ),
-            Text("Better care. Wherever you are.", style: AppFonts.subTitle),
+            Text(
+              "Better care. Wherever you are.",
+              style: AppFonts.subTitle,
+            ),
           ],
         ),
       ),

@@ -60,7 +60,7 @@ class _OnbardingViewState extends State<OnbardingView> {
               } else {
                 await sp!.setBool("isVisit", true);
                 if (!context.mounted) return;
-                Navigator.pushReplacementNamed(context, '/select_role');
+                Navigator.pushReplacementNamed(context, '/auth_login');
               }
             },
             child: Text("Skip", style: AppFonts.smallSubTitle),
@@ -114,7 +114,7 @@ class _OnbardingViewState extends State<OnbardingView> {
                   } else {
                     await sp!.setBool("isVisit", true);
                     if (!context.mounted) return;
-                    Navigator.pushReplacementNamed(context, '/select_role');
+                    Navigator.pushReplacementNamed(context, '/auth_login');
                   }
                 }
               },

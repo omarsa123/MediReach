@@ -89,7 +89,7 @@ app.use(
 const startServer = async () => {
   try {
     await connectDB();
-    app.listen(PORT, () => {
+    app.listen(PORT,"0.0.0.0" ,() => {
       console.log(`🚀 MedReach Auth server is running on port ${PORT}`);
       console.log(`   Environment: ${process.env.NODE_ENV ?? "development"}`);
       console.log(`   Auth base path: /api/v1/auth`); // 👈 عدناها لتكون مطابقة للصح
