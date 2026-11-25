@@ -1,0 +1,92 @@
+@baseUrl = http://localhost:5000/api/v1/auth
+@contentType = application/json
+
+### 1. Register New Patient
+POST {{baseUrl}}/register
+Content-Type: {{contentType}}
+
+{
+  "name": "Felobateer Wael",
+  "username": "felo_test1",
+  "email": "felo.test1@gmail.com",
+  "password": "Password123!",
+  "phone": "01012345678",
+  "address": "10th of Ramadan City",
+  "role": "patient",
+  "bloodType": "O_Positive"
+}
+
+### 2. Register New Doctor
+POST {{baseUrl}}/register
+Content-Type: {{contentType}}
+
+{
+  "name": "Dr. Sarah Johnson",
+  "username": "dr_sarah",
+  "email": "sarah.doc@gmail.com",
+  "password": "Password123!",
+  "phone": "01098765432",
+  "role": "provider",
+  "providerType": "Doctor",
+  "specialization": "Cardiologist",
+  "licenseNumber": "DOC-123456"
+}
+
+### 3. Login Patient
+POST {{baseUrl}}/login
+Content-Type: {{contentType}}
+
+{
+  "email": "felo.test1@gmail.com",
+  "password": "Password123!"
+}
+
+### 4. Resend Verification Email
+POST {{baseUrl}}/resend-verification
+Content-Type: {{contentType}}
+
+{
+  "email": "felo.test1@gmail.com"
+}
+
+### 5. Verify Email (استبدل 123456 بالكود الفعلي اللي وصلك في الإيميل)
+POST {{baseUrl}}/verify-email
+Content-Type: {{contentType}}
+
+{
+  "email": "felo.test1@gmail.com",
+  "otp": "123456"
+}
+
+### 6. Forgot Password
+POST {{baseUrl}}/forgot-password
+Content-Type: {{contentType}}
+
+{
+  "email": "felo.test1@gmail.com"
+}
+
+### 7. Reset Password (استبدل 123456 بالكود اللي وصلك لتغيير الباسورد)
+POST {{baseUrl}}/reset-password
+Content-Type: {{contentType}}
+
+{
+  "email": "felo.test1@gmail.com",
+  "otp": "123456",
+  "newPassword": "NewPassword123!"
+}
+
+### 8. Google Auth URL
+GET {{baseUrl}}/google-url
+
+### Hard Delete User (Dev Helper)
+POST http://localhost:5050/api/v1/auth/hard-delete
+Content-Type: application/json
+
+{
+  "email": "felo.test1@gmail.com"
+}
+
+
+### Wipe Everything Direct
+POST http://localhost:5050/api/v1/wipe-everything-now
