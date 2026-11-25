@@ -8,6 +8,7 @@ import { userRouter } from "./modules/user/user.routes.js";
 import { patientRouter } from "./modules/patient/patient.routes.js";
 import { providerRouter } from "./modules/provider/provider.routes.js";
 import { EmailService } from "./services/email.service.js";
+import { adminRouter } from "./modules/admin/admin.routes.js";
 
 dotenv.config();
 
@@ -59,6 +60,7 @@ app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/patients", patientRouter);
 app.use("/api/v1/providers", providerRouter);
+app.use("/api/v1/admin", adminRouter);
 
 // ---------- 404 ----------
 app.use((_req, res) => {
