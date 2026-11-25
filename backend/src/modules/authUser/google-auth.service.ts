@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { UserModel } from "../../modules/user/user.model.js";
 import { toPublicUser } from "../../utils/response.utils.js";
+import { pool } from "../../config/dbconfig.js";
 import { supabase } from "../../config/subabase.js";
 import { ProviderModel } from "../provider/provider.model.js";
 
@@ -62,7 +63,6 @@ export class GoogleAuthService {
         code: "GOOGLE_URL_ERROR",
       };
     }
-    // إرجاع الـ URL على شكل كائن لتتوافق مع توقعات الفرونت إند data['url']
     return { url: data.url };
   }
 
@@ -99,7 +99,6 @@ export class GoogleAuthService {
   ) {
     let resolvedAccessToken = accessToken;
 
-    // إذا أرسل الفرونت authorization code بدلاً من الـ accessToken مباشرة، نقوم بتبديله عبر Supabase
     if (
       (!resolvedAccessToken || resolvedAccessToken.trim() === "") &&
       code &&
@@ -187,7 +186,19 @@ export class GoogleAuthService {
     const role = (user.role || "patient").toString().toLowerCase();
     const currentStatus = normalizeStatus(user.status);
 
-    // إذا كان المستخدم Provider، نسمح له بالدخول طالما تم تفعيله في أي من الجدولين (لتجاوز مرحلة التطوير الحالي)
+    // 1. تفعيل حساب المريض أو الأدمن تلقائياً طالما دخل بحساب Google موثق
+    if (
+      (role === "patient" || role === "admin") &&
+      currentStatus !== "active"
+    ) {
+      await pool.query(
+        `UPDATE public."User" SET "status" = 'Active' WHERE "userId" = $1`,
+        [user.userId],
+      );
+      user.status = "Active";
+    }
+
+    // 2. التحقق من حالة المزود (Provider)
     if (role === "provider") {
       const providerProfile = await ProviderModel.findProviderProfile(
         user.userId,
@@ -196,14 +207,13 @@ export class GoogleAuthService {
         providerProfile?.verificationStatus || currentStatus,
       );
 
-      // لو الحالة Active في الـ User أو في الـ Provider، نعتبره مفعل ويُسمح له بالدخول
       const isAuthorized =
         currentStatus === "active" || verificationStatus === "active";
 
       if (!isAuthorized && verificationStatus === "pending") {
         throw {
           status: 403,
-          message: "حسابك قيد المراجعة من قبل الإدارة.",
+          message: "Your account is pending admin approval.",
           code: "PROVIDER_PENDING",
         };
       }
@@ -216,11 +226,12 @@ export class GoogleAuthService {
       ) {
         throw {
           status: 403,
-          message: `عذراً، لا يمكنك تسجيل الدخول لأن حالة الحساب هي: ${providerProfile?.verificationStatus || currentStatus}`,
+          message: `Access denied. Your account status is ${providerProfile?.verificationStatus || currentStatus}.`,
           code: "PROVIDER_ACCESS_DENIED",
         };
       }
     }
+
     const tokens = generateLocalTokens(user.userId, user.email);
     return { user: toPublicUser(user), session: tokens };
   }
