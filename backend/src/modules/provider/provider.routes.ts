@@ -7,6 +7,7 @@ import {
 
 const providerRouter = Router();
 
+// البروفايل
 providerRouter.get(
   "/profile",
   requireAuth,
@@ -18,6 +19,34 @@ providerRouter.patch(
   requireAuth,
   authorizeRoles("provider"),
   ProviderController.updateProfile,
+);
+
+// المواعيد
+providerRouter.get(
+  "/schedules",
+  requireAuth,
+  authorizeRoles("provider"),
+  ProviderController.listSchedules,
+);
+providerRouter.post(
+  "/schedules",
+  requireAuth,
+  authorizeRoles("provider"),
+  ProviderController.createSchedule,
+);
+
+// الحجوزات
+providerRouter.get(
+  "/appointments",
+  requireAuth,
+  authorizeRoles("provider"),
+  ProviderController.listAppointments,
+);
+providerRouter.patch(
+  "/appointments/:appointmentId/status",
+  requireAuth,
+  authorizeRoles("provider"),
+  ProviderController.updateAppointmentStatus,
 );
 
 export { providerRouter };

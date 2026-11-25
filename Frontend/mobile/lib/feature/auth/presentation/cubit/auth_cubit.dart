@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../feature/auth/data/models/user_model.dart';
 import '../../../../core/network/api_exceptions.dart';
 import '../../../../feature/auth/data/auth_repository.dart';
 import 'auth_state.dart';
@@ -8,7 +9,6 @@ class AuthCubit extends Cubit<AuthState> {
 
   AuthCubit(this._repo) : super(AuthInitial());
 
-  /// Check whether an authenticated session exists (used by SplashView)
   Future<void> restoreSession() async {
     try {
       final user = await _repo.restoreSession();
@@ -22,30 +22,30 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Get Google Auth URL
-  Future<String?> getGoogleAuthUrl() async {
+  Future<String?> getGoogleAuthUrl({required String role}) async {
     try {
-      return await _repo.getGoogleAuthUrl();
+      return await _repo.getGoogleAuthUrl(role: role);
     } catch (_) {
       return null;
     }
   }
 
-  /// Login with role validation
   Future<void> loginUser({
     required String email,
     required String password,
     String? expectedRole,
+    bool rememberMe = false,
   }) async {
     emit(const AuthLoading(message: 'Signing in...'));
+
     try {
       final user = await _repo.login(
         email: email,
         password: password,
         expectedRole: expectedRole,
+        rememberMe: rememberMe,
       );
 
-      // فحص إضافي للتأكد من حالة الحساب لو جاي Pending
       if (user.status.toLowerCase() == 'pending') {
         emit(
           AuthEmailNotVerified(
@@ -73,11 +73,10 @@ class AuthCubit extends Cubit<AuthState> {
         AuthError(e.message, code: e.code, email: e.data?['email']?.toString()),
       );
     } catch (e) {
-      emit(AuthError('Login failed. Please try again.'));
+      emit(const AuthError('Login failed. Please try again.'));
     }
   }
 
-  /// Patient Registration
   Future<void> registerPatient({
     required String name,
     required String email,
@@ -86,6 +85,7 @@ class AuthCubit extends Cubit<AuthState> {
     String? username,
     String? address,
     String? bloodType,
+    String? profileImageBase64,
   }) async {
     emit(const AuthLoading(message: 'Creating patient account...'));
     try {
@@ -97,6 +97,7 @@ class AuthCubit extends Cubit<AuthState> {
         username: username,
         address: address,
         bloodType: bloodType,
+        profileImageBase64: profileImageBase64,
       );
       emit(AuthRegistrationSuccess(user: user, email: email));
     } on NetworkException catch (e) {
@@ -108,7 +109,6 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Doctor / Provider Registration
   Future<void> registerDoctor({
     required String name,
     required String email,
@@ -116,10 +116,12 @@ class AuthCubit extends Cubit<AuthState> {
     required String password,
     required String specialization,
     required String licenseNumber,
+    String providerType = 'Doctor',
     String? username,
     String? address,
+    String? profileImagePath,
   }) async {
-    emit(const AuthLoading(message: 'Creating doctor account...'));
+    emit(const AuthLoading(message: 'Creating provider account...'));
     try {
       final user = await _repo.registerDoctor(
         name: name,
@@ -128,8 +130,10 @@ class AuthCubit extends Cubit<AuthState> {
         password: password,
         specialization: specialization,
         licenseNumber: licenseNumber,
+        providerType: providerType,
         username: username,
         address: address,
+        profileImageBase64: profileImagePath,
       );
       emit(AuthRegistrationSuccess(user: user, email: email));
     } on NetworkException catch (e) {
@@ -141,7 +145,6 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Verify Email with email & OTP
   Future<void> verifyEmail({required String email, required String otp}) async {
     emit(const AuthLoading(message: 'Verifying email...'));
     try {
@@ -156,7 +159,6 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Resend Verification Email
   Future<void> resendVerification(String email) async {
     emit(const AuthLoading(message: 'Sending verification email...'));
     try {
@@ -176,7 +178,6 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Forgot Password
   Future<void> forgotPassword(String email) async {
     emit(const AuthLoading(message: 'Sending reset instructions...'));
     try {
@@ -196,19 +197,39 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Reset Password with email, otp, and newPassword
+  Future<void> verifyResetOtp({
+    required String email,
+    required String otp,
+  }) async {
+    emit(const AuthLoading(message: 'Verifying code...'));
+
+    try {
+      await _repo.verifyResetOtp(email: email, otp: otp);
+
+      emit(AuthResetOtpVerified(email: email.trim()));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (e) {
+      emit(const AuthError('OTP verification failed. Please try again.'));
+    }
+  }
+
   Future<void> resetPassword({
     required String email,
     required String otp,
     required String newPassword,
   }) async {
     emit(const AuthLoading(message: 'Resetting password...'));
+
     try {
       await _repo.resetPassword(
         email: email,
         otp: otp,
         newPassword: newPassword,
       );
+
       emit(
         const AuthPasswordResetSuccess(
           'Password reset successfully! Please sign in.',
@@ -219,11 +240,44 @@ class AuthCubit extends Cubit<AuthState> {
     } on ApiException catch (e) {
       emit(AuthError(e.message, code: e.code));
     } catch (e) {
-      emit(AuthError('Password reset failed: ${e.toString()}'));
+      emit(const AuthError('Password reset failed. Please try again.'));
     }
   }
 
-  /// Logout
+  Future<UserModel?> completeGoogleLogin({
+    String? accessToken,
+    String? refreshToken,
+    String? code,
+    required String expectedRole,
+    bool rememberMe = false,
+  }) async {
+    emit(const AuthLoading(message: 'Completing Google sign-in...'));
+
+    try {
+      final user = await _repo.completeGoogleLogin(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        code: code,
+        expectedRole: expectedRole,
+        rememberMe: rememberMe,
+      );
+
+      emit(AuthAuthenticated(user, message: 'Welcome, ${user.name}!'));
+
+      return user;
+    } on RoleMismatchException catch (e) {
+      emit(AuthError(e.message, code: 'ROLE_MISMATCH'));
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (e) {
+      emit(const AuthError('Google sign-in failed. Please try again.'));
+    }
+
+    return null;
+  }
+
   Future<void> logout() async {
     emit(const AuthLoading(message: 'Signing out...'));
     try {
@@ -234,14 +288,12 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  /// Reset error state back to initial
   void clearError() {
     if (state is AuthError) {
       emit(AuthInitial());
     }
   }
 
-  // --- Legacy Compatibility Overloads ---
   Future<void> login(String email, String password) async {
     await loginUser(email: email, password: password);
   }
@@ -257,6 +309,7 @@ class AuthCubit extends Cubit<AuthState> {
         specialization:
             payload['specialization']?.toString() ?? 'General Practitioner',
         licenseNumber: payload['licenseNumber']?.toString() ?? '',
+        providerType: payload['providerType']?.toString() ?? 'Doctor',
       );
     } else {
       await registerPatient(

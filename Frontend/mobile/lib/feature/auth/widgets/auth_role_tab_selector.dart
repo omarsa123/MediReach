@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 
-enum AuthRole { patient, doctor, organizer }
+enum AuthRole { patient, provider, organizer }
 
 class AuthRoleTabSelector extends StatelessWidget {
   const AuthRoleTabSelector({
@@ -31,9 +31,9 @@ class AuthRoleTabSelector extends StatelessWidget {
             onTap: () => onRoleChanged(AuthRole.patient),
           ),
           _TabItem(
-            label: 'Doctor',
-            isSelected: selectedRole == AuthRole.doctor,
-            onTap: () => onRoleChanged(AuthRole.doctor),
+            label: 'Provider',
+            isSelected: selectedRole == AuthRole.provider,
+            onTap: () => onRoleChanged(AuthRole.provider),
           ),
         ],
       ),

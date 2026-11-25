@@ -1,21 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
+import '../../../../core/services/user_preferences.dart';
+import '../../../../feature/auth/widgets/auth_role_tab_selector.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
 import '../../widgets/auth_app_bar.dart';
 import '../../widgets/auth_button.dart';
 import '../../widgets/auth_header.dart';
-import '../../widgets/auth_role_tab_selector.dart';
 import '../../widgets/auth_social_button.dart';
 import '../../widgets/auth_text_field.dart';
+import '../../widgets/auth_snack_bar.dart';
 import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 
 class PatientLoginView extends StatefulWidget {
-  const PatientLoginView({super.key, this.initialRole = AuthRole.patient});
+  const PatientLoginView({super.key, this.initialRole});
 
-  final AuthRole initialRole;
+  final AuthRole? initialRole;
 
   @override
   State<PatientLoginView> createState() => _PatientLoginViewState();
@@ -26,14 +29,12 @@ class _PatientLoginViewState extends State<PatientLoginView> {
   final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
 
-  late AuthRole _selectedRole;
   bool _rememberMe = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _selectedRole = widget.initialRole;
-  }
+  bool get isProvider => widget.initialRole == AuthRole.provider;
+
+  String? get expectedRole =>
+      widget.initialRole == null ? null : (isProvider ? 'provider' : 'patient');
 
   @override
   void dispose() {
@@ -43,117 +44,126 @@ class _PatientLoginViewState extends State<PatientLoginView> {
   }
 
   void _onSignIn() {
-    if (_formKey.currentState?.validate() ?? false) {
-      String expectedRole = 'patient';
-      if (_selectedRole == AuthRole.doctor) {
-        expectedRole = 'provider';
-      } else if (_selectedRole == AuthRole.organizer) {
-        expectedRole = 'organization';
-      }
-
-      context.read<AuthCubit>().loginUser(
-        email: _identifierController.text.trim(),
-        password: _passwordController.text,
-        expectedRole: expectedRole,
-      );
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
     }
+
+    context.read<AuthCubit>().loginUser(
+      email: _identifierController.text.trim(),
+      password: _passwordController.text,
+      expectedRole: expectedRole,
+      rememberMe: _rememberMe,
+    );
   }
 
   Future<void> _onGooglePressed() async {
+    debugPrint('=== GOOGLE BUTTON CLICKED! ===');
+
+    final roleParam = expectedRole ?? 'patient';
+
+    await UserPreferences.savePendingGoogleLogin(
+      role: roleParam,
+      rememberMe: _rememberMe,
+    );
+
+    if (!mounted) return;
+
+    final authCubit = context.read<AuthCubit>();
+    final url = await authCubit.getGoogleAuthUrl(role: roleParam);
+
+    debugPrint('GOOGLE AUTH URL RECEIVED: $url');
+
+    if (!mounted) return;
+
+    if (url == null || url.isEmpty) {
+      await UserPreferences.clearPendingGoogleLogin();
+      if (!mounted) return;
+      AuthSnackBar.show(
+        context,
+        'Server failed to return Google sign-in URL. Check backend connection.',
+        type: AuthSnackBarType.error,
+      );
+      return;
+    }
+
+    final uri = Uri.tryParse(url);
+
+    if (uri == null || !uri.hasScheme) {
+      await UserPreferences.clearPendingGoogleLogin();
+      if (!mounted) return;
+      AuthSnackBar.show(
+        context,
+        'The Google sign-in link is invalid.',
+        type: AuthSnackBarType.error,
+      );
+      return;
+    }
+
     try {
-      await Supabase.instance.client.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: 'medreach://auth', // متطابق مع الـ Manifest و Supabase
-        authScreenLaunchMode: LaunchMode.externalApplication,
-      );
-    } on AuthException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Google Login Error: ${error.message}'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Unexpected Error: $error'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+
+      if (!opened && mounted) {
+        await UserPreferences.clearPendingGoogleLogin();
+        if (!mounted) return;
+        AuthSnackBar.show(
+          context,
+          'Could not launch external browser for Google sign-in.',
+          type: AuthSnackBarType.error,
+        );
+      }
+    } catch (e) {
+      debugPrint('LAUNCH URL ERROR: $e');
+      await UserPreferences.clearPendingGoogleLogin();
+      if (mounted) {
+        AuthSnackBar.show(
+          context,
+          'Error opening browser: $e',
+          type: AuthSnackBarType.error,
+        );
+      }
     }
   }
 
   void _onSignUp() {
-    if (_selectedRole == AuthRole.doctor) {
-      Navigator.pushReplacementNamed(context, '/doctor_register');
-    } else {
-      Navigator.pushReplacementNamed(context, '/patient_register');
-    }
+    Navigator.pushNamed(context, '/select_role');
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDoctor = _selectedRole == AuthRole.doctor;
-    final isOrganizer = _selectedRole == AuthRole.organizer;
-
-    final appBarTitle = isDoctor
-        ? 'DOCTOR LOGIN'
-        : isOrganizer
-        ? 'ORGANIZER LOGIN'
-        : 'PATIENT LOGIN';
-
-    final subhead = isDoctor
-        ? 'Sign in to manage your practice and appointments.'
-        : isOrganizer
-        ? 'Sign in to manage your clinic and staff.'
-        : 'Sign in to manage your health and appointments.';
-
-    final identifierLabel = isDoctor
-        ? 'Email Address / Doctor ID'
-        : isOrganizer
-        ? 'Organization ID / Email'
-        : 'Email or Phone number';
-
-    final identifierHint = isDoctor
-        ? 'doctor@medicare.com'
-        : isOrganizer
-        ? 'admin@hospital.com'
-        : 'Enter your email or phone';
+    final appBarTitle = 'SIGN IN';
+    const subhead = 'Sign in to continue to your account.';
+    const identifierLabel = 'Email Address';
+    const identifierHint = 'Enter your email address';
 
     return BlocConsumer<AuthCubit, AuthState>(
       listener: (context, state) {
         if (state is AuthAuthenticated) {
           final user = state.user;
 
-          // التوجيه الذكي حسب دور المستخدم (Role) مع تفادي اللودينج العالق
           if (user.isDoctor) {
             Navigator.pushReplacementNamed(context, '/doctor_dashboard');
           } else if (user.isPatient) {
-            Navigator.pushReplacementNamed(
-              context,
-              '/patient_home',
-            ); // أو شاشة الهوم للمريض
+            Navigator.pushReplacementNamed(context, '/patient_home');
           } else {
             Navigator.pushReplacementNamed(context, '/select_role');
           }
         } else if (state is AuthEmailNotVerified) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.orange.shade800,
-            ),
+          AuthSnackBar.show(
+            context,
+            state.message,
+            type: AuthSnackBarType.warning,
           );
+
           Navigator.pushNamed(
             context,
             '/email_verification',
             arguments: state.email,
           );
         } else if (state is AuthError) {
-          // هنا الكيوبيت بيطلع من حالة التحميل تلقائياً لما يبعت AuthError
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(state.message), backgroundColor: Colors.red),
+          AuthSnackBar.show(
+            context,
+            state.message,
+            type: AuthSnackBarType.error,
           );
         }
       },
@@ -172,17 +182,11 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SizedBox(height: 8),
+
                     const Center(child: AuthHeader()),
-                    const SizedBox(height: 20),
-                    AuthRoleTabSelector(
-                      selectedRole: _selectedRole,
-                      onRoleChanged: (role) {
-                        setState(() {
-                          _selectedRole = role;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 22),
+
+                    const SizedBox(height: 30),
+
                     const Text(
                       'Welcome back!',
                       style: TextStyle(
@@ -192,7 +196,9 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                         letterSpacing: -0.3,
                       ),
                     ),
+
                     const SizedBox(height: 4),
+
                     Text(
                       subhead,
                       style: const TextStyle(
@@ -201,26 +207,36 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                         fontWeight: FontWeight.w400,
                       ),
                     ),
-                    const SizedBox(height: 20),
+
+                    const SizedBox(height: 24),
+
                     AuthTextField(
                       label: identifierLabel,
                       hintText: identifierHint,
                       controller: _identifierController,
                       prefixIcon: Icons.mail_outline_rounded,
-                      validator: Validators.emailOrPhone,
+                      validator: Validators.email,
                     ),
+
                     const SizedBox(height: 14),
+
                     AuthTextField(
                       label: 'Password',
                       hintText: 'Enter your password',
                       controller: _passwordController,
                       isPassword: true,
                       prefixIcon: Icons.lock_outline_rounded,
-                      validator: (v) => (v == null || v.isEmpty)
-                          ? 'Please enter your password'
-                          : null,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your password';
+                        }
+
+                        return null;
+                      },
                     ),
+
                     const SizedBox(height: 10),
+
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -239,12 +255,16 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                                   color: AppColors.inputBorder,
                                   width: 1.5,
                                 ),
-                                onChanged: (val) {
-                                  setState(() => _rememberMe = val ?? false);
+                                onChanged: (value) {
+                                  setState(() {
+                                    _rememberMe = value ?? false;
+                                  });
                                 },
                               ),
                             ),
+
                             const SizedBox(width: 8),
+
                             const Text(
                               'Remember me',
                               style: TextStyle(
@@ -255,6 +275,7 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                             ),
                           ],
                         ),
+
                         GestureDetector(
                           onTap: () {
                             Navigator.pushNamed(context, '/forgot_password');
@@ -270,15 +291,21 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                         ),
                       ],
                     ),
+
                     const SizedBox(height: 22),
+
                     AuthButton(
                       label: 'Sign in',
                       isLoading: isLoading,
                       onPressed: _onSignIn,
                     ),
+
                     const SizedBox(height: 22),
+
                     AuthSocialButton(onGooglePressed: _onGooglePressed),
+
                     const SizedBox(height: 22),
+
                     Center(
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -290,6 +317,7 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                               color: AppColors.secondary,
                             ),
                           ),
+
                           GestureDetector(
                             onTap: _onSignUp,
                             child: const Text(
@@ -304,6 +332,7 @@ class _PatientLoginViewState extends State<PatientLoginView> {
                         ],
                       ),
                     ),
+
                     const SizedBox(height: 20),
                   ],
                 ),

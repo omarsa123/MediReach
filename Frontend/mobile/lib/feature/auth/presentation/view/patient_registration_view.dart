@@ -1,8 +1,12 @@
+import 'dart:convert'; // <-- أضفنا استيراد مكتبة التحويل هنا
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
 import '../../widgets/auth_app_bar.dart';
+import '../../widgets/auth_snack_bar.dart';
 import '../../widgets/auth_button.dart';
 import '../../widgets/auth_header.dart';
 import '../../widgets/auth_text_field.dart';
@@ -13,7 +17,8 @@ class PatientRegistrationView extends StatefulWidget {
   const PatientRegistrationView({super.key});
 
   @override
-  State<PatientRegistrationView> createState() => _PatientRegistrationViewState();
+  State<PatientRegistrationView> createState() =>
+      _PatientRegistrationViewState();
 }
 
 class _PatientRegistrationViewState extends State<PatientRegistrationView> {
@@ -25,6 +30,8 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
   final _confirmPasswordController = TextEditingController();
 
   String _countryCode = '+20';
+  File? _profileImage;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void dispose() {
@@ -36,17 +43,50 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
     super.dispose();
   }
 
-  void _onCreateAccount() {
+  Future<void> _pickImage() async {
+    try {
+      final XFile? picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+      if (picked != null && mounted) {
+        setState(() => _profileImage = File(picked.path));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      AuthSnackBar.show(
+        context,
+        'Could not pick image. Please try again.',
+        type: AuthSnackBarType.error,
+      );
+    }
+  }
+
+  Future<void> _onCreateAccount() async {
     if (_formKey.currentState?.validate() ?? false) {
-      final cleanPhone = _phoneController.text.trim().replaceFirst(RegExp(r'^0+'), '');
+      final cleanPhone = _phoneController.text.trim().replaceFirst(
+        RegExp(r'^0+'),
+        '',
+      );
       final fullPhone = '$_countryCode$cleanPhone';
 
+      String? base64Image;
+      if (_profileImage != null) {
+        final bytes = await _profileImage!.readAsBytes();
+        base64Image = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+      }
+
+      if (!mounted) return; // حماية الـ Context بعد الـ await
+
       context.read<AuthCubit>().registerPatient(
-            name: _fullNameController.text.trim(),
-            email: _emailController.text.trim(),
-            phone: fullPhone,
-            password: _passwordController.text,
-          );
+        name: _fullNameController.text.trim(),
+        email: _emailController.text.trim(),
+        phone: fullPhone,
+        password: _passwordController.text,
+        profileImageBase64: base64Image,
+      );
     }
   }
 
@@ -63,11 +103,10 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
         } else if (state is AuthAuthenticated) {
           Navigator.pushReplacementNamed(context, '/patient_login');
         } else if (state is AuthError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red,
-            ),
+          AuthSnackBar.show(
+            context,
+            state.message,
+            type: AuthSnackBarType.error,
           );
         }
       },
@@ -76,9 +115,7 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
 
         return Scaffold(
           backgroundColor: Colors.white,
-          appBar: const AuthAppBar(
-            title: 'Patient Registration',
-          ),
+          appBar: const AuthAppBar(title: 'Patient Registration'),
           body: SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -109,6 +146,77 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
                       ),
                     ),
                     const SizedBox(height: 20),
+                    Center(
+                      child: Column(
+                        children: [
+                          GestureDetector(
+                            onTap: _pickImage,
+                            child: Stack(
+                              children: [
+                                Container(
+                                  width: 100,
+                                  height: 100,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: const Color(0xFFF1F5F9),
+                                    border: Border.all(
+                                      color: AppColors.inputBorder,
+                                      width: 1.5,
+                                    ),
+                                    image: _profileImage != null
+                                        ? DecorationImage(
+                                            image: FileImage(_profileImage!),
+                                            fit: BoxFit.cover,
+                                          )
+                                        : null,
+                                  ),
+                                  child: _profileImage == null
+                                      ? const Icon(
+                                          Icons.person_outline_rounded,
+                                          size: 42,
+                                          color: Color(0xFF94A3B8),
+                                        )
+                                      : null,
+                                ),
+                                Positioned(
+                                  bottom: 0,
+                                  right: 0,
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.button1background,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.camera_alt_rounded,
+                                      size: 16,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _profileImage == null
+                                ? 'Add profile photo'
+                                : 'Change profile photo',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.button1background,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
                     AuthTextField(
                       label: 'Full Name',
                       hintText: 'Enter your full name',
@@ -131,7 +239,8 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
                       hintText: 'Enter your phone number',
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
-                      validator: (v) => Validators.phone(v, countryCode: _countryCode),
+                      validator: (v) =>
+                          Validators.phone(v, countryCode: _countryCode),
                       prefixWidget: Container(
                         padding: const EdgeInsets.only(left: 12, right: 6),
                         child: Row(
@@ -157,13 +266,27 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
                                   color: Color(0xFF334155),
                                 ),
                                 items: const [
-                                  DropdownMenuItem(value: '+20', child: Text('+20')),
-                                  DropdownMenuItem(value: '+1', child: Text('+1')),
-                                  DropdownMenuItem(value: '+966', child: Text('+966')),
-                                  DropdownMenuItem(value: '+971', child: Text('+971')),
+                                  DropdownMenuItem(
+                                    value: '+20',
+                                    child: Text('+20'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: '+1',
+                                    child: Text('+1'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: '+966',
+                                    child: Text('+966'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: '+971',
+                                    child: Text('+971'),
+                                  ),
                                 ],
                                 onChanged: (val) {
-                                  if (val != null) setState(() => _countryCode = val);
+                                  if (val != null) {
+                                    setState(() => _countryCode = val);
+                                  }
                                 },
                               ),
                             ),
@@ -193,8 +316,10 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
                       controller: _confirmPasswordController,
                       isPassword: true,
                       prefixIcon: Icons.lock_outline_rounded,
-                      validator: (v) =>
-                          Validators.confirmPassword(v, _passwordController.text),
+                      validator: (v) => Validators.confirmPassword(
+                        v,
+                        _passwordController.text,
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Padding(
@@ -247,7 +372,10 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
                           ),
                           GestureDetector(
                             onTap: () {
-                              Navigator.pushReplacementNamed(context, '/patient_login');
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/patient_login',
+                              );
                             },
                             child: const Text(
                               'Sign in',

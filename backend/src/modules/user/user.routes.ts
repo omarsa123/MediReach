@@ -1,11 +1,10 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth.middleware.js";
-import { AuthController } from "../authUser/authcontroller.js";
+import { UserController } from "./user.controller.js";
 
 const userRouter = Router();
 
-// Profile endpoints are already under /auth/me; keep a thin user router for compatibility.
-userRouter.get("/me", requireAuth, AuthController.me);
-userRouter.patch("/me", requireAuth, AuthController.updateMe);
+userRouter.get("/me", requireAuth, UserController.me);
+userRouter.patch("/me", requireAuth, UserController.updateMe);
 
 export { userRouter };

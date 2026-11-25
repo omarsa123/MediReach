@@ -44,9 +44,9 @@ class _SelectRoleState extends State<SelectRole> {
     if (!mounted) return;
 
     if (_selected == AccountType.patient) {
-      Navigator.pushReplacementNamed(context, '/patient_login');
+      Navigator.pushReplacementNamed(context, '/patient_register');
     } else {
-      Navigator.pushReplacementNamed(context, '/doctor_login');
+      Navigator.pushReplacementNamed(context, '/doctor_register');
     }
   }
 

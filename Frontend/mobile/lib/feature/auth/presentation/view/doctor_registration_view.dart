@@ -1,11 +1,18 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:image_picker/image_picker.dart';
+
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
 import '../../widgets/auth_app_bar.dart';
+import '../../widgets/auth_snack_bar.dart';
 import '../../widgets/auth_button.dart';
 import '../../widgets/auth_header.dart';
 import '../../widgets/auth_text_field.dart';
+import '../../widgets/provider_type_dropdown.dart';
 import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 
@@ -18,6 +25,7 @@ class DoctorRegistrationView extends StatefulWidget {
 
 class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
   final _formKey = GlobalKey<FormState>();
+
   final _fullNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -27,19 +35,92 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
 
   String _countryCode = '+20';
   String? _selectedSpecialty;
+  String _providerType = 'Doctor';
 
-  final List<String> _specialties = const [
-    'General Practitioner',
-    'Cardiologist',
-    'Dermatologist',
-    'Pediatrician',
-    'Neurologist',
-    'Orthopedic Surgeon',
-    'Psychiatrist',
+  File? _profileImage;
+  final ImagePicker _picker = ImagePicker();
+
+  static const List<String> _providerRoles = [
+    'Doctor',
+    'Nurse',
+    'Physiotherapist',
+    'Lab Technician',
+    'Pharmacist',
+    'Radiologist',
     'Dentist',
-    'Ophthalmologist',
-    'Internal Medicine',
   ];
+
+  static const Map<String, List<String>> _specialtiesByRole = {
+    'Doctor': [
+      'General Practitioner',
+      'Cardiologist',
+      'Dermatologist',
+      'Pediatrician',
+      'Neurologist',
+      'Orthopedic Surgeon',
+      'Psychiatrist',
+      'Ophthalmologist',
+      'Internal Medicine',
+      'ENT Specialist',
+      'Gynecologist',
+      'Urologist',
+      'Oncologist',
+      'Endocrinologist',
+    ],
+    'Nurse': [
+      'General Nursing',
+      'Critical Care Nursing',
+      'Pediatric Nursing',
+      'Surgical Nursing',
+      'Emergency Nursing',
+      'Community Health Nursing',
+      'Midwifery',
+      'Oncology Nursing',
+    ],
+    'Physiotherapist': [
+      'Musculoskeletal Physiotherapy',
+      'Neurological Physiotherapy',
+      'Pediatric Physiotherapy',
+      'Sports Physiotherapy',
+      'Cardiopulmonary Physiotherapy',
+      'Geriatric Physiotherapy',
+    ],
+    'Lab Technician': [
+      'Clinical Chemistry',
+      'Hematology',
+      'Microbiology',
+      'Immunology',
+      'Histopathology',
+      'Molecular Diagnostics',
+      'Blood Bank',
+    ],
+    'Pharmacist': [
+      'Clinical Pharmacy',
+      'Hospital Pharmacy',
+      'Community Pharmacy',
+      'Industrial Pharmacy',
+      'Oncology Pharmacy',
+    ],
+    'Radiologist': [
+      'Diagnostic Radiology',
+      'Interventional Radiology',
+      'Nuclear Medicine',
+      'Ultrasound',
+      'CT / MRI Specialist',
+    ],
+    'Dentist': [
+      'General Dentistry',
+      'Orthodontics',
+      'Endodontics',
+      'Periodontics',
+      'Oral Surgery',
+      'Pediatric Dentistry',
+      'Prosthodontics',
+    ],
+  };
+
+  List<String> get _currentSpecialties =>
+      _specialtiesByRole[_providerType] ?? const [];
 
   @override
   void dispose() {
@@ -52,99 +133,164 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
     super.dispose();
   }
 
-  void _onCreateAccount() {
-    if (_formKey.currentState?.validate() ?? false) {
-      if (_selectedSpecialty == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select your specialty')),
-        );
-        return;
+  Future<void> _pickImage() async {
+    try {
+      final XFile? picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+
+      if (picked != null && mounted) {
+        setState(() => _profileImage = File(picked.path));
       }
+    } catch (e) {
+      if (!mounted) return;
 
-      final cleanPhone = _phoneController.text.trim().replaceFirst(RegExp(r'^0+'), '');
-      final fullPhone = '$_countryCode$cleanPhone';
-
-      context.read<AuthCubit>().registerDoctor(
-            name: _fullNameController.text.trim(),
-            email: _emailController.text.trim(),
-            phone: fullPhone,
-            password: _passwordController.text,
-            specialization: _selectedSpecialty!,
-            licenseNumber: _licenseController.text.trim(),
-          );
+      AuthSnackBar.show(
+        context,
+        'Could not pick image. Please try again.',
+        type: AuthSnackBarType.error,
+      );
     }
   }
 
-  void _showSpecialtyPicker() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Select Specialty',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 20),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: _specialties.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final item = _specialties[index];
-                    final isSelected = item == _selectedSpecialty;
-                    return ListTile(
-                      title: Text(
-                        item,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                          color: isSelected
-                              ? AppColors.button1background
-                              : const Color(0xFF1E293B),
-                        ),
-                      ),
-                      trailing: isSelected
-                          ? const Icon(
-                              Icons.check_circle,
-                              color: AppColors.button1background,
-                              size: 20,
-                            )
-                          : null,
-                      onTap: () {
-                        setState(() => _selectedSpecialty = item);
-                        Navigator.pop(ctx);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+  Future<void> _onCreateAccount() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    if (_selectedSpecialty == null) {
+      AuthSnackBar.show(
+        context,
+        'Please select your specialty',
+        type: AuthSnackBarType.warning,
+      );
+      return;
+    }
+
+    final cleanPhone = _phoneController.text.trim().replaceFirst(
+      RegExp(r'^0+'),
+      '',
     );
+
+    final fullPhone = '$_countryCode$cleanPhone';
+
+    String? base64Image;
+    if (_profileImage != null) {
+      final bytes = await _profileImage!.readAsBytes();
+      base64Image = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+    }
+
+    if (!mounted) return;
+
+    context.read<AuthCubit>().registerDoctor(
+      name: _fullNameController.text.trim(),
+      email: _emailController.text.trim(),
+      phone: fullPhone,
+      password: _passwordController.text,
+      specialization: _selectedSpecialty!,
+      licenseNumber: _licenseController.text.trim(),
+      providerType: _providerType,
+      profileImagePath: base64Image,
+    );
+  }
+
+  void _onProviderTypeChanged(String? value) {
+    if (value == null || value == _providerType) return;
+
+    setState(() {
+      _providerType = value;
+      _selectedSpecialty = null;
+    });
+  }
+
+  Widget _buildProfileImagePicker() {
+    return Center(
+      child: Column(
+        children: [
+          GestureDetector(
+            onTap: _pickImage,
+            child: Stack(
+              children: [
+                Container(
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFFF1F5F9),
+                    border: Border.all(
+                      color: AppColors.inputBorder,
+                      width: 1.5,
+                    ),
+                    image: _profileImage != null
+                        ? DecorationImage(
+                            image: FileImage(_profileImage!),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
+                  ),
+                  child: _profileImage == null
+                      ? const Icon(
+                          Icons.person_outline_rounded,
+                          size: 42,
+                          color: Color(0xFF94A3B8),
+                        )
+                      : null,
+                ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: AppColors.button1background,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: const Icon(
+                      Icons.camera_alt_rounded,
+                      size: 16,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _profileImage == null
+                ? 'Add profile photo'
+                : 'Change profile photo',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.button1background,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String get _nameHint {
+    switch (_providerType) {
+      case 'Nurse':
+        return 'Nurse First Last name';
+      case 'Physiotherapist':
+        return 'Physio First Last name';
+      case 'Lab Technician':
+        return 'Technician First Last name';
+      case 'Pharmacist':
+        return 'Pharmacist First Last name';
+      case 'Radiologist':
+        return 'Radiologist First Last name';
+      case 'Dentist':
+        return 'Dr. First Last name';
+      default:
+        return 'Dr. First Last name';
+    }
   }
 
   @override
@@ -158,13 +304,12 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
             arguments: state.email,
           );
         } else if (state is AuthAuthenticated) {
-          Navigator.pushReplacementNamed(context, '/doctor_login');
+          Navigator.pushReplacementNamed(context, '/provider_login');
         } else if (state is AuthError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red,
-            ),
+          AuthSnackBar.show(
+            context,
+            state.message,
+            type: AuthSnackBarType.error,
           );
         }
       },
@@ -173,9 +318,7 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
 
         return Scaffold(
           backgroundColor: Colors.white,
-          appBar: const AuthAppBar(
-            title: 'Doctor Registration',
-          ),
+          appBar: const AuthAppBar(title: 'Provider Registration'),
           body: SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -186,7 +329,7 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                   children: [
                     const SizedBox(height: 8),
                     const Center(child: AuthHeader()),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     const Text(
                       'Create your account',
                       style: TextStyle(
@@ -198,7 +341,7 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Join our network of healthcare professionals.',
+                      'Join our network of healthcare providers.',
                       style: TextStyle(
                         fontSize: 13,
                         color: AppColors.secondary,
@@ -206,14 +349,29 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                       ),
                     ),
                     const SizedBox(height: 20),
+
+                    _buildProfileImagePicker(),
+
+                    const SizedBox(height: 20),
+
+                    ProviderTypeDropdown(
+                      roles: _providerRoles,
+                      selectedRole: _providerType,
+                      onChanged: _onProviderTypeChanged,
+                    ),
+
+                    const SizedBox(height: 14),
+
                     AuthTextField(
                       label: 'Full name',
-                      hintText: 'Dr. First Last name',
+                      hintText: _nameHint,
                       controller: _fullNameController,
                       prefixIcon: Icons.person_outline_rounded,
                       validator: Validators.name,
                     ),
+
                     const SizedBox(height: 14),
+
                     AuthTextField(
                       label: 'Email Address',
                       hintText: 'Enter your email',
@@ -222,13 +380,16 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                       prefixIcon: Icons.mail_outline_rounded,
                       validator: Validators.email,
                     ),
+
                     const SizedBox(height: 14),
+
                     AuthTextField(
                       label: 'Phone number',
                       hintText: 'Enter your phone number',
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
-                      validator: (v) => Validators.phone(v, countryCode: _countryCode),
+                      validator: (v) =>
+                          Validators.phone(v, countryCode: _countryCode),
                       prefixWidget: Container(
                         padding: const EdgeInsets.only(left: 12, right: 6),
                         child: Row(
@@ -254,13 +415,29 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                                   color: Color(0xFF334155),
                                 ),
                                 items: const [
-                                  DropdownMenuItem(value: '+20', child: Text('+20')),
-                                  DropdownMenuItem(value: '+1', child: Text('+1')),
-                                  DropdownMenuItem(value: '+966', child: Text('+966')),
-                                  DropdownMenuItem(value: '+971', child: Text('+971')),
+                                  DropdownMenuItem(
+                                    value: '+20',
+                                    child: Text('+20'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: '+1',
+                                    child: Text('+1'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: '+966',
+                                    child: Text('+966'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: '+971',
+                                    child: Text('+971'),
+                                  ),
                                 ],
                                 onChanged: (val) {
-                                  if (val != null) setState(() => _countryCode = val);
+                                  if (val != null) {
+                                    setState(() {
+                                      _countryCode = val;
+                                    });
+                                  }
                                 },
                               ),
                             ),
@@ -274,28 +451,34 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 14),
-                    AuthTextField(
+
+                    ProviderTypeDropdown(
+                      roles: _currentSpecialties,
+                      selectedRole: _selectedSpecialty,
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedSpecialty = value;
+                        });
+                      },
                       label: 'Specialty',
-                      hintText: _selectedSpecialty ?? 'Select your specialty',
-                      readOnly: true,
-                      onTap: _showSpecialtyPicker,
-                      prefixIcon: Icons.medical_services_outlined,
-                      suffixIcon: const Icon(
-                        Icons.keyboard_arrow_down_rounded,
-                        color: Color(0xFF64748B),
-                      ),
                     ),
+
                     const SizedBox(height: 14),
+
                     AuthTextField(
                       label: 'Medical license number',
                       hintText: 'Enter license number',
                       controller: _licenseController,
                       prefixIcon: Icons.badge_outlined,
-                      validator: (v) =>
-                          v == null || v.trim().isEmpty ? 'Please enter your license number' : null,
+                      validator: (v) => v == null || v.trim().isEmpty
+                          ? 'Please enter your license number'
+                          : null,
                     ),
+
                     const SizedBox(height: 14),
+
                     AuthTextField(
                       label: 'Password',
                       hintText: 'Enter your password',
@@ -304,16 +487,23 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                       prefixIcon: Icons.lock_outline_rounded,
                       validator: Validators.password,
                     ),
+
                     const SizedBox(height: 14),
+
                     AuthTextField(
                       label: 'Confirm password',
                       hintText: 'Confirm your password',
                       controller: _confirmPasswordController,
                       isPassword: true,
                       prefixIcon: Icons.lock_outline_rounded,
-                      validator: (v) => Validators.confirmPassword(v, _passwordController.text),
+                      validator: (v) => Validators.confirmPassword(
+                        v,
+                        _passwordController.text,
+                      ),
                     ),
+
                     const SizedBox(height: 16),
+
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 2),
                       child: RichText(
@@ -344,13 +534,17 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 20),
+
                     AuthButton(
                       label: 'Create account',
                       isLoading: isLoading,
                       onPressed: _onCreateAccount,
                     ),
+
                     const SizedBox(height: 18),
+
                     Center(
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -364,7 +558,10 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                           ),
                           GestureDetector(
                             onTap: () {
-                              Navigator.pushReplacementNamed(context, '/doctor_login');
+                              Navigator.pushReplacementNamed(
+                                context,
+                                '/provider_login',
+                              );
                             },
                             child: const Text(
                               'Sign in',
@@ -378,6 +575,7 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                         ],
                       ),
                     ),
+
                     const SizedBox(height: 20),
                   ],
                 ),

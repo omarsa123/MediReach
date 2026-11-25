@@ -1,5 +1,6 @@
 import { pool } from "../../config/dbconfig.js";
 import bcrypt from "bcrypt";
+import { StorageService } from "../../services/storage.service.js";
 
 export type UserRole = "patient" | "provider" | "organization" | "admin";
 
@@ -11,6 +12,7 @@ export interface RegisterInput {
   phone: string;
   address?: string;
   role: UserRole;
+  profilePictureUrl?: string | null;
 
   // Patient
   birthDate?: string;
@@ -41,16 +43,26 @@ export interface UpdateProfileInput {
   username?: string;
   phone?: string;
   address?: string;
-  profilePictureUrl?: string;
+  profilePictureUrl?: string | null;
 }
 
 export class UserModel {
-  // متوافقة مع استدعاء الـ Controller القديم والجديد
   static async createFromAuth(
     userId: string,
-    data: RegisterInput,
+    data: RegisterInput & { profileImageBase64?: string }, // لو الـ RegisterInput مش مشمول فيها
     explicitPasswordHash?: string,
   ) {
+    let profilePictureUrl = data.profilePictureUrl || null;
+
+    // التحقق من وجود صورة مرفوعة كـ Base64 (سواء للمريض أو المزود)
+    if (data.profileImageBase64) {
+      // رفع الصورة باستخدام الخدمة المستقلة وحفظ الرابط الناتج
+      profilePictureUrl = await StorageService.uploadProfileImage(
+        data.profileImageBase64,
+        userId,
+      );
+    }
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -61,14 +73,12 @@ export class UserModel {
           ? await bcrypt.hash(data.password, 10)
           : await bcrypt.hash("OAUTH_USER_DEFAULT_PASS", 10);
 
-      // Use Inactive (allowed by default CHECK). Patient → Active after OTP.
-      // Provider stays Inactive until admin sets Active/Approved.
       const initialStatus = "Inactive";
 
       const insertUser = await client.query(
         `INSERT INTO public."User"
-          ("userId", "name", "username", "email", "passwordHash", "phone", "address", "status")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ("userId", "name", "username", "email", "passwordHash", "phone", "address", "status", "profilePictureUrl")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING
            "userId", "name", "username", "email", "phone",
            "address", "profilePictureUrl", "createdAt", "status"`,
@@ -80,14 +90,18 @@ export class UserModel {
           passwordHash,
           data.phone,
           data.address ?? null,
-          initialStatus, // 👈 هنا بنمرر الحالة الصح حسب الدور
+          initialStatus,
+          profilePictureUrl, // <-- تم التعديل هنا لاستخدام الرابط الجديد بعد الرفع
         ],
       );
 
       const user = insertUser.rows[0];
 
       // إنشاء الصف في الجدول الفرعي حسب الـ Role
-      await this.createRoleRow(client, userId, data);
+      await this.createRoleRow(client, userId, {
+        ...data,
+        profilePictureUrl, // تمرير الرابط للجدول الفرعي أيضاً لو محتاجه
+      });
 
       await client.query("COMMIT");
       return { ...user, role: data.role ?? "patient" };
@@ -99,7 +113,6 @@ export class UserModel {
     }
   }
 
-  // توزيع الصفوف الفرعية حسب الـ Role والجدول المطلوب
   private static async createRoleRow(
     client: any,
     userId: string,
@@ -138,7 +151,7 @@ export class UserModel {
             data.licenseNumber || `TEMP-${userId.slice(0, 8)}`,
             data.qualification || null,
             data.experienceYears ?? 0,
-            "https://example.com/default-avatar.png",
+            data.profilePictureUrl ?? null,
           ],
         );
         break;
@@ -156,12 +169,11 @@ export class UserModel {
             data.organizationName || "Pending Name",
             data.organizerType || "Clinic",
             data.address || "Pending Address",
-            data.licenseDocumentUrl ||
-              "https://example.com/pending-license.pdf",
+            data.licenseDocumentUrl || null,
             data.description || null,
             data.latitude ?? null,
             data.longitude ?? null,
-            data.logoUrl || null,
+            data.logoUrl ?? null,
           ],
         );
         break;
@@ -185,7 +197,6 @@ export class UserModel {
     }
   }
 
-  // البحث بالـ ID مع استرجاع الـ role والبيانات المرتبطة — كويري واحدة فقط
   static async findById(userId: string) {
     const result = await pool.query(
       `SELECT
@@ -199,6 +210,7 @@ export class UserModel {
          END AS role,
          p."bloodType",
          pr."providerType", pr."specialization", pr."licenseNumber",
+         pr."profilePictureUrl" AS "providerProfilePicture",
          o."organizationName", o."organizerType"
        FROM public."User" u
        LEFT JOIN public."Patient"      p  ON p."userId"  = u."userId"
@@ -214,7 +226,6 @@ export class UserModel {
     return result.rows[0];
   }
 
-  // تحديث البروفايل
   static async updateProfile(userId: string, data: UpdateProfileInput) {
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -251,17 +262,14 @@ export class UserModel {
       `UPDATE public."User"
        SET ${fields.join(", ")}
        WHERE "userId" = $${idx}
-       RETURNING
-         "userId", "name", "username", "email", "phone",
-         "address", "profilePictureUrl", "createdAt", "status"`,
+       RETURNING "userId"`,
       values,
     );
 
     if (result.rows.length === 0) return null;
-    return result.rows[0];
+    return this.findById(userId);
   }
 
-  // دوال فحص التوافر مع دعم الاستثناء عند التحديث
   static async isUsernameTaken(
     username: string,
     excludeUserId?: string,

@@ -13,6 +13,8 @@ abstract class AuthRemoteDataSource {
 
   Future<void> forgotPassword(String email);
 
+  Future<void> verifyResetOtp({required String email, required String otp});
+
   Future<void> resetPassword({
     required String email,
     required String otp,
@@ -27,12 +29,14 @@ abstract class AuthRemoteDataSource {
 
   Future<UserModel> updateMe(String accessToken, Map<String, dynamic> data);
 
-  Future<String> getGoogleAuthUrl();
+  Future<String> getGoogleAuthUrl({required String role});
 
-  Future<AuthResponseModel> googleCallback(
-    String accessToken,
-    String refreshToken,
-  );
+  Future<AuthResponseModel> googleCallback({
+    String? accessToken,
+    String? refreshToken,
+    String? code,
+    required String expectedRole,
+  });
 }
 
 class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
@@ -118,7 +122,19 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
     );
   }
 
-  /// Reset user password.
+  /// Verify password reset OTP.
+  @override
+  Future<void> verifyResetOtp({
+    required String email,
+    required String otp,
+  }) async {
+    await _apiClient.post(
+      '/api/v1/auth/verify-reset-otp',
+      body: {'email': email.trim(), 'otp': otp.trim()},
+    );
+  }
+
+  /// Reset user password using email and verified OTP.
   @override
   Future<void> resetPassword({
     required String email,
@@ -199,31 +215,41 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
 
   /// Get Google OAuth authorization URL.
   @override
-  Future<String> getGoogleAuthUrl() async {
-    final response = await _apiClient.get('/api/v1/auth/google-url');
+  Future<String> getGoogleAuthUrl({required String role}) async {
+    final response = await _apiClient.get(
+      '/api/v1/auth/google-url',
+      queryParameters: {'role': role},
+    );
 
-    final data = _extractData(response);
-
-    final url = data['url'];
-
-    if (url == null || url.toString().trim().isEmpty) {
-      throw const FormatException(
-        'Google authorization URL was not returned by server',
-      );
+    if (response is Map && response['data'] is String) {
+      return response['data'].toString();
     }
-
-    return url.toString();
+    final data = _extractData(response);
+    return data['url'].toString();
   }
 
   /// Complete Google OAuth callback.
   @override
-  Future<AuthResponseModel> googleCallback(
-    String accessToken,
-    String refreshToken,
-  ) async {
+  Future<AuthResponseModel> googleCallback({
+    String? accessToken,
+    String? refreshToken,
+    String? code,
+    required String expectedRole,
+  }) async {
+    final body = <String, dynamic>{'expectedRole': expectedRole};
+    if (accessToken != null && accessToken.isNotEmpty) {
+      body['accessToken'] = accessToken;
+    }
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      body['refreshToken'] = refreshToken;
+    }
+    if (code != null && code.isNotEmpty) {
+      body['code'] = code;
+    }
+
     final response = await _apiClient.post(
       '/api/v1/auth/google/callback',
-      body: {'accessToken': accessToken, 'refreshToken': refreshToken},
+      body: body,
     );
 
     return AuthResponseModel.fromJson(_toMap(response));

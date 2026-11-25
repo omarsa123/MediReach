@@ -1,4 +1,3 @@
-import { randomInt } from "node:crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { UserModel } from "../../modules/user/user.model.js";
@@ -8,8 +7,15 @@ import {
   toPublicUser,
 } from "../../utils/response.utils.js";
 import { EmailService } from "../../services/email.service.js";
+import { OtpService } from "./otp.service.js";
 import { pool } from "../../config/dbconfig.js";
-import { supabase, supabaseAdmin } from "../../config/subabase.js";
+import { supabaseAdmin } from "../../config/subabase.js";
+import {
+  GoogleAuthService,
+  generateLocalTokens,
+} from "./google-auth.service.js";
+
+export { generateLocalTokens };
 
 const getJwtSecret = (): string => {
   const secret = process.env.JWT_SECRET;
@@ -21,53 +27,62 @@ const getJwtSecret = (): string => {
   return secret;
 };
 
-/**
- * Local JWT only — same shape for email/password and Google flows.
- * Frontend AuthSessionModel expects: accessToken, refreshToken, expiresIn, tokenType
- */
-export const generateLocalTokens = (userId: string, email: string) => {
-  const secret = getJwtSecret();
-  const accessToken = jwt.sign({ userId, email }, secret, { expiresIn: "1h" });
-  const localRefreshToken = jwt.sign(
-    { userId, email, type: "refresh" },
-    secret,
-    { expiresIn: "7d" },
-  );
-
-  return {
-    accessToken,
-    refreshToken: localRefreshToken,
-    expiresIn: 3600,
-    tokenType: "bearer",
-  };
-};
-
-const otpStorage = new Map<string, { code: string; expiresAt: number }>();
-
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-function createOtp(): string {
-  return randomInt(100000, 1000000).toString();
-}
-
-function storeOtp(key: string, code: string, ttlMs = 10 * 60 * 1000) {
-  otpStorage.set(key, { code, expiresAt: Date.now() + ttlMs });
-}
-
-function getValidOtp(key: string): string | null {
-  const stored = otpStorage.get(key);
-  if (!stored) return null;
-  if (stored.expiresAt < Date.now()) {
-    otpStorage.delete(key);
-    return null;
+async function uploadProfileImage(
+  image: unknown,
+  userId: string,
+): Promise<string | null> {
+  if (!image) return null;
+  if (typeof image !== "string") {
+    throw {
+      status: 400,
+      message: "profileImageBase64 must be a base64 string",
+      code: "INVALID_IMAGE",
+    };
   }
-  return stored.code;
-}
-
-function clearOtp(key: string) {
-  otpStorage.delete(key);
+  const match = image.match(
+    /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/,
+  );
+  if (!match) {
+    throw {
+      status: 400,
+      message: "Unsupported image format. Use JPG, PNG or WEBP.",
+      code: "INVALID_IMAGE_FORMAT",
+    };
+  }
+  const mime = match[1];
+  const buffer = Buffer.from(match[2], "base64");
+  if (!buffer.length || buffer.length > 5 * 1024 * 1024) {
+    throw {
+      status: 400,
+      message: "Image must be smaller than 5 MB",
+      code: "IMAGE_SIZE_INVALID",
+    };
+  }
+  const ext = mime === "image/jpeg" ? "jpg" : mime.split("/")[1];
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET || "profile-images";
+  const path = `${userId}/${Date.now()}.${ext}`;
+  const { data, error } = await supabaseAdmin.storage
+    .from(bucket)
+    .upload(path, buffer, {
+      contentType: mime,
+      upsert: true,
+      cacheControl: "3600",
+    });
+  if (error || !data) {
+    throw {
+      status: 502,
+      message: error?.message || "Image upload failed",
+      code: "IMAGE_UPLOAD_FAILED",
+    };
+  }
+  const { data: publicData } = supabaseAdmin.storage
+    .from(bucket)
+    .getPublicUrl(data.path);
+  return publicData.publicUrl;
 }
 
 function normalizeStatus(status: unknown): string {
@@ -92,12 +107,6 @@ function isUnverified(status: string): boolean {
 }
 
 export class AuthService {
-  /**
-   * Register: create in Supabase Auth FIRST (UUID + keep FK/data consistency),
-   * then local row with the SAME userId.
-   * This keeps existing uploaded data and any FK to auth.users working.
-   * Login / tokens remain fully local (bcrypt + our JWT).
-   */
   static async register(body: any) {
     body.email = normalizeEmail(String(body.email || ""));
     let role = body.role || "patient";
@@ -136,8 +145,6 @@ export class AuthService {
       };
     }
 
-    // Supabase Auth فقط لتوليد UUID والحفاظ على توافق الداتا الحالية / FK
-    // نضيف timeout عشان ما يعلقش الـ request لو Supabase بطيء
     let authData: any = null;
     let authError: any = null;
     try {
@@ -145,12 +152,7 @@ export class AuthService {
         email: body.email,
         password: body.password,
         email_confirm: true,
-        user_metadata: {
-          name: body.name,
-          username,
-          phone: body.phone,
-          role,
-        },
+        user_metadata: { name: body.name, username, phone: body.phone, role },
       });
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(
@@ -166,7 +168,7 @@ export class AuthService {
         status: 504,
         message:
           timeoutOrNetErr?.message ||
-          "Authentication service timeout. Check SUPABASE_SERVICE_ROLE_KEY and network.",
+          "Authentication service timeout. Check credentials.",
         code: "AUTH_TIMEOUT",
       };
     }
@@ -180,29 +182,43 @@ export class AuthService {
         throw {
           status: 409,
           message:
-            "This email still exists in authentication. Run hard-delete or clean-orphans first.",
+            "This email still exists in authentication. Run hard-delete first.",
           code: "AUTH_EMAIL_EXISTS",
         };
       }
-      throw {
-        status: 400,
-        message: msg,
-        code: "AUTH_CREATE_FAILED",
-      };
+      throw { status: 400, message: msg, code: "AUTH_CREATE_FAILED" };
     }
 
     const userId = authData.user.id;
+    const isProvider = role === "provider";
+    if (isProvider && !body.profileImageBase64) {
+      await supabaseAdmin.auth.admin.deleteUser(userId);
+      throw {
+        status: 400,
+        message: "A profile photo is required for provider accounts",
+        code: "PROFILE_IMAGE_REQUIRED",
+      };
+    }
+    let profilePictureUrl: string | null = null;
+    try {
+      profilePictureUrl = await uploadProfileImage(
+        body.profileImageBase64,
+        userId,
+      );
+    } catch (imageError) {
+      await supabaseAdmin.auth.admin.deleteUser(userId);
+      throw imageError;
+    }
     const passwordHash = await bcrypt.hash(body.password, 10);
 
     let publicUser;
     try {
       publicUser = await UserModel.createFromAuth(
         userId,
-        { ...body, role, username },
+        { ...body, role, username, profilePictureUrl },
         passwordHash,
       );
     } catch (dbError) {
-      // rollback auth user if local insert fails
       try {
         await supabaseAdmin.auth.admin.deleteUser(userId);
       } catch (_) {}
@@ -216,8 +232,7 @@ export class AuthService {
       throw dbError;
     }
 
-    const otp = createOtp();
-    storeOtp(`verify_${body.email}`, otp);
+    const otp = await OtpService.issue("verify", body.email);
 
     try {
       await EmailService.sendVerificationEmail(body.email, otp);
@@ -237,7 +252,6 @@ export class AuthService {
 
   static async login(body: { email: string; password: string }) {
     const email = normalizeEmail(body.email);
-
     const localUser = await UserModel.findByEmail(email);
     if (!localUser?.passwordHash) {
       throw {
@@ -293,11 +307,7 @@ export class AuthService {
     }
 
     const tokens = generateLocalTokens(publicUser.userId, publicUser.email);
-
-    return {
-      user: toPublicUser(publicUser),
-      session: tokens,
-    };
+    return { user: toPublicUser(publicUser), session: tokens };
   }
 
   static async refreshToken(refreshToken: string) {
@@ -310,7 +320,6 @@ export class AuthService {
     }
 
     const secret = getJwtSecret();
-
     try {
       const payload: any = jwt.verify(refreshToken, secret);
       if (payload.type !== "refresh") {
@@ -321,7 +330,6 @@ export class AuthService {
         };
       }
       const user = await UserModel.findById(payload.userId);
-
       if (!user || !isLoginAllowed(normalizeStatus(user.status))) {
         throw {
           status: 401,
@@ -331,10 +339,7 @@ export class AuthService {
       }
 
       const tokens = generateLocalTokens(user.userId, user.email);
-      return {
-        user: toPublicUser(user),
-        session: tokens,
-      };
+      return { user: toPublicUser(user), session: tokens };
     } catch (err: any) {
       if (err.status) throw err;
       throw {
@@ -357,11 +362,37 @@ export class AuthService {
 
     const user = await UserModel.findByEmail(email);
     if (user) {
-      const otp = createOtp();
-      storeOtp(`reset_${email}`, otp);
+      const otp = await OtpService.issue("reset", email);
       await EmailService.sendPasswordResetEmail(email, otp);
     }
     return true;
+  }
+
+  static async verifyResetPasswordOtp(email: string, otp: string) {
+    email = normalizeEmail(email || "");
+    otp = String(otp || "").trim();
+    if (!email || !otp) {
+      throw {
+        status: 400,
+        message: "email and otp are required",
+        code: "MISSING_FIELDS",
+      };
+    }
+
+    const isValid = await OtpService.verify("reset", email, otp, false);
+    if (!isValid) {
+      throw {
+        status: 400,
+        message: "Invalid or expired OTP code",
+        code: "INVALID_OTP",
+      };
+    }
+
+    const user = await UserModel.findByEmail(email);
+    if (!user) {
+      throw { status: 404, message: "User not found", code: "NOT_FOUND" };
+    }
+    return { verified: true, email };
   }
 
   static async resetPasswordWithOtp(
@@ -387,8 +418,8 @@ export class AuthService {
       };
     }
 
-    const storedCode = getValidOtp(`reset_${email}`);
-    if (!storedCode || storedCode !== otp) {
+    const isValid = await OtpService.verify("reset", email, otp, false);
+    if (!isValid) {
       throw {
         status: 400,
         message: "Invalid or expired OTP code",
@@ -401,6 +432,18 @@ export class AuthService {
       throw { status: 404, message: "User not found", code: "NOT_FOUND" };
     }
 
+    const { error: authPasswordError } =
+      await supabaseAdmin.auth.admin.updateUserById(user.userId, {
+        password: newPassword,
+      });
+    if (authPasswordError) {
+      throw {
+        status: 502,
+        message: authPasswordError.message,
+        code: "AUTH_PASSWORD_UPDATE_FAILED",
+      };
+    }
+
     const passwordHash = await bcrypt.hash(newPassword, 10);
     const updated = await UserModel.updatePasswordHash(
       user.userId,
@@ -409,24 +452,12 @@ export class AuthService {
     if (!updated) {
       throw {
         status: 500,
-        message: "Failed to update password",
+        message: "Failed to update local password",
         code: "UPDATE_FAILED",
       };
     }
 
-    // Sync password to Supabase Auth (same UUID) so Google / Auth stay consistent
-    try {
-      await supabaseAdmin.auth.admin.updateUserById(user.userId, {
-        password: newPassword,
-      });
-    } catch (e: any) {
-      console.warn(
-        "[ResetPassword] Could not sync password to Supabase Auth:",
-        e?.message,
-      );
-    }
-
-    clearOtp(`reset_${email}`);
+    await OtpService.clear(`reset_${email}`);
     return true;
   }
 
@@ -441,8 +472,8 @@ export class AuthService {
       };
     }
 
-    const storedCode = getValidOtp(`verify_${email}`);
-    if (!storedCode || storedCode !== otp) {
+    const isValid = await OtpService.verify("verify", email, otp, false);
+    if (!isValid) {
       throw {
         status: 400,
         message: "Invalid or expired verification code",
@@ -458,7 +489,6 @@ export class AuthService {
     const fullUser = await UserModel.findById(user.userId);
     const role = (fullUser?.role || "patient").toString().toLowerCase();
 
-    // Patients become Active after OTP; providers stay pending approval
     if (role === "patient" || !fullUser?.role) {
       const client = await pool.connect();
       try {
@@ -471,8 +501,7 @@ export class AuthService {
       }
     }
 
-    clearOtp(`verify_${email}`);
-
+    await OtpService.clear(`verify_${email}`);
     const updatedUser = await UserModel.findById(user.userId);
     const tokens = generateLocalTokens(updatedUser.userId, updatedUser.email);
 
@@ -500,143 +529,32 @@ export class AuthService {
       return { message: "This email is already verified." };
     }
 
-    const otp = createOtp();
-    storeOtp(`verify_${email}`, otp);
+    const otp = await OtpService.issue("verify", email);
     await EmailService.sendVerificationEmail(email, otp);
     return true;
   }
 
-  static async getGoogleAuthUrl() {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo:
-          process.env.GOOGLE_REDIRECT_URL ||
-          "https://unsworn-upgrade-maternity.ngrok-free.dev/api/v1/auth/google/callback",
-        skipBrowserRedirect: true,
-      },
-    });
-
-    if (error || !data?.url) {
-      throw {
-        status: 400,
-        message: error?.message || "Failed to generate Google auth URL",
-        code: "GOOGLE_URL_ERROR",
-      };
-    }
-
-    return data.url;
+  static async getGoogleAuthUrl(expectedRole: string = "patient") {
+    return GoogleAuthService.getGoogleAuthUrl(expectedRole);
   }
 
-  /**
-   * Google path: verify Supabase token once, then issue LOCAL JWTs.
-   * Same userId (Supabase UUID) so existing rows stay linked.
-   */
-  static async googleCallback(accessToken: string, _refreshToken: string) {
-    if (!accessToken) {
-      throw {
-        status: 400,
-        message: "accessToken is required",
-        code: "MISSING_TOKENS",
-      };
-    }
-
-    const { data: userData, error: userError } =
-      await supabase.auth.getUser(accessToken);
-
-    if (userError || !userData.user) {
-      throw {
-        status: 401,
-        message: "Invalid Google tokens",
-        code: "INVALID_TOKENS",
-      };
-    }
-
-    const supabaseUser = userData.user;
-    let user = await UserModel.findById(supabaseUser.id);
-
-    if (!user) {
-      const email = (supabaseUser.email || "").toLowerCase();
-      if (email) {
-        const byEmail = await UserModel.findByEmail(email);
-        if (byEmail) user = await UserModel.findById(byEmail.userId);
-      }
-    }
-
-    if (!user) {
-      const meta = supabaseUser.user_metadata ?? {};
-      const email = supabaseUser.email ?? meta.email ?? "";
-      const name =
-        meta.full_name || meta.name || email.split("@")[0] || "Google User";
-      let username = (
-        meta.preferred_username ||
-        email.split("@")[0] ||
-        `user_${supabaseUser.id.slice(0, 8)}`
-      )
-        .replace(/[^a-zA-Z0-9_]/g, "_")
-        .slice(0, 60);
-
-      let finalUsername = username;
-      let attempt = 0;
-      while (await UserModel.isUsernameTaken(finalUsername)) {
-        attempt += 1;
-        finalUsername = `${username}_${attempt}`.slice(0, 60);
-      }
-
-      const defaultRandomHash = await bcrypt.hash("GOOGLE_OAUTH_USER_PASS", 10);
-
-      user = await UserModel.createFromAuth(
-        supabaseUser.id,
-        {
-          name,
-          username: finalUsername,
-          email,
-          phone: meta.phone || `g-${supabaseUser.id.slice(0, 10)}`,
-          role: "patient",
-        },
-        defaultRandomHash,
-      );
-    }
-
-    // لا ننشط حسابات Provider/Organization تلقائياً — لازم اعتماد الأدمن
-    const role = (user.role || "patient").toString().toLowerCase();
-    const currentStatus = normalizeStatus(user.status);
-
-    if (currentStatus !== "active") {
-      if (role === "patient" || role === "admin") {
-        const client = await pool.connect();
-        try {
-          await client.query(
-            `UPDATE public."User" SET "status" = 'Active' WHERE "userId" = $1`,
-            [user.userId],
-          );
-          user.status = "Active";
-        } finally {
-          client.release();
-        }
-      }
-      // provider / organization يظلوا Inactive/Pending لحد ما الأدمن يعتمدهم
-    }
-
-    // Always return LOCAL JWT (never the raw Supabase access token to the app)
-    const tokens = generateLocalTokens(user.userId, user.email);
-
-    return {
-      user: toPublicUser(user),
-      session: tokens,
-    };
+  static async exchangeGoogleCode(code: string) {
+    return GoogleAuthService.exchangeGoogleCode(code);
   }
 
-  /**
-   * Hard delete — الحل الصحيح لمشكلة "اتمسح من الجداول والـ UUID فضل في auth.users"
-   *
-   * الترتيب:
-   * 1) امسح من auth.users (Supabase Admin)
-   * 2) امسح جداول الأدوار + User محلياً
-   *
-   * Trigger مش مطلوب: الاستدعاء لـ Admin API أسهل وأأمن من الكود.
-   * استخدم endpoint ده دايماً لما تمسح مستخدم (مش DELETE محلي لوحده).
-   */
+  static async googleCallback(
+    accessToken: string,
+    _refreshToken: string,
+    expectedRole: string = "patient",
+    code?: string,
+  ) {
+    return GoogleAuthService.googleCallback(
+      accessToken,
+      _refreshToken,
+      expectedRole,
+      code,
+    );
+  }
   static async hardDeleteUser(email: string) {
     email = normalizeEmail(email || "");
     if (!email) {
@@ -650,7 +568,6 @@ export class AuthService {
     const localUser = await UserModel.findByEmail(email);
     let authUserId: string | null = localUser?.userId ?? null;
 
-    // لو مفيش صف محلي، دور في auth.users بالإيميل (orphan)
     if (!authUserId) {
       try {
         const { data } = await supabaseAdmin.auth.admin.listUsers({
@@ -661,44 +578,68 @@ export class AuthService {
           (u) => normalizeEmail(u.email || "") === email,
         );
         if (found) authUserId = found.id;
-      } catch (e: any) {
-        console.warn("[HardDelete] listUsers failed:", e?.message);
-      }
+      } catch (e: any) {}
     }
 
-    // 1) Auth أولاً
     if (authUserId) {
-      const { error } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
-      if (error) {
-        console.warn("[HardDelete] auth.admin.deleteUser:", error.message);
-      }
+      try {
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
+      } catch (e: any) {}
     }
 
-    // 2) الجداول المحلية (بترتيب يحترم ON DELETE RESTRICT)
     if (localUser) {
       const client = await pool.connect();
       const uid = localUser.userId;
       try {
         await client.query("BEGIN");
 
-        // احذف البيانات المرتبطة أولاً (المواعيد / الخدمات / الملاحظات...)
-        // لو الجدول مش موجود بيتجاهل الخطأ
+        const targetAppointmentsSubquery = `
+          SELECT a."appointmentId"
+          FROM public."Appointment" a
+          LEFT JOIN public."ProviderService" ps ON ps."providerServiceId" = a."providerServiceId"
+          LEFT JOIN public."ProviderAssignment" pa ON pa."assignmentId" = ps."assignmentId"
+          WHERE a."patientId" = $1
+             OR pa."providerId" = $1
+             OR pa."organizerId" = $1
+        `;
+
         const dependentDeletes = [
-          `DELETE FROM public."Appointment" WHERE "patientId" = $1 OR "providerId" = $1`,
-          `DELETE FROM public."MedicalNote" WHERE "patientId" = $1 OR "providerId" = $1`,
-          `DELETE FROM public."Service" WHERE "organizationId" = $1 OR "providerId" = $1`,
-          `DELETE FROM public."OrganizationProvider" WHERE "organizationId" = $1 OR "providerId" = $1`,
-          `DELETE FROM public."Review" WHERE "patientId" = $1 OR "providerId" = $1`,
+          `DELETE FROM public."Rate"
+           WHERE "patientId" = $1
+              OR "providerId" = $1
+              OR "appointmentId" IN (${targetAppointmentsSubquery})`,
+          `DELETE FROM public."Prescription"
+           WHERE "patientId" = $1
+              OR "providerId" = $1
+              OR "appointmentId" IN (${targetAppointmentsSubquery})`,
+          `DELETE FROM public."MedicalNote"
+           WHERE "patientId" = $1
+              OR "providerId" = $1
+              OR "appointmentId" IN (${targetAppointmentsSubquery})`,
+          `DELETE FROM public."Appointment"
+           WHERE "appointmentId" IN (${targetAppointmentsSubquery})`,
+          `DELETE FROM public."Schedule"
+           WHERE "assignmentId" IN (
+             SELECT "assignmentId" FROM public."ProviderAssignment"
+             WHERE "providerId" = $1 OR "organizerId" = $1
+           )`,
+          `DELETE FROM public."ProviderService"
+           WHERE "assignmentId" IN (
+             SELECT "assignmentId" FROM public."ProviderAssignment"
+             WHERE "providerId" = $1 OR "organizerId" = $1
+           )
+           OR "organizerServiceId" IN (
+             SELECT "organizerServiceId" FROM public."OrganizerService"
+             WHERE "organizerId" = $1
+           )`,
+          `DELETE FROM public."OrganizerService" WHERE "organizerId" = $1`,
+          `DELETE FROM public."ProviderAssignment" WHERE "providerId" = $1 OR "organizerId" = $1`,
         ];
+
         for (const sql of dependentDeletes) {
           try {
             await client.query(sql, [uid]);
-          } catch (e: any) {
-            // جدول مش موجود أو عمود مختلف — نتجاهل ونكمل
-            if (!e?.message?.includes("does not exist")) {
-              console.warn("[HardDelete] dependent delete:", e?.message);
-            }
-          }
+          } catch (e: any) {}
         }
 
         await client.query(`DELETE FROM public."Patient" WHERE "userId" = $1`, [
@@ -721,7 +662,6 @@ export class AuthService {
         await client.query("COMMIT");
       } catch (dbErr) {
         await client.query("ROLLBACK");
-        console.error("[HardDelete] local cleanup error:", dbErr);
         throw {
           status: 500,
           message: "Failed to delete local user data",
@@ -732,22 +672,11 @@ export class AuthService {
       }
     }
 
-    clearOtp(`verify_${email}`);
-    clearOtp(`reset_${email}`);
-
-    return {
-      email,
-      deleted: true,
-      authUserId,
-      message: "User removed from Supabase Auth and local tables.",
-    };
+    await OtpService.clear(`verify_${email}`);
+    await OtpService.clear(`reset_${email}`);
+    return { email, deleted: true, authUserId };
   }
 
-  /**
-   * ينظف:
-   * - صفوف في auth.users مفيش ليها user محلي
-   * - صفوف محلية userId بتاعها مش موجود في auth.users
-   */
   static async cleanOrphanUsers() {
     const { data: supData, error } = await supabaseAdmin.auth.admin.listUsers({
       page: 1,
@@ -781,7 +710,6 @@ export class AuthService {
       const email = normalizeEmail(supUser.email || "");
       const existsLocally =
         localIds.has(supUser.id) || (email && localEmails.has(email));
-
       if (!existsLocally) {
         await supabaseAdmin.auth.admin.deleteUser(supUser.id);
         deletedFromAuth.push(email || supUser.id);
@@ -831,8 +759,6 @@ export class AuthService {
     return {
       deletedFromAuth: deletedFromAuth.length,
       deletedFromLocal: deletedFromLocal.length,
-      deletedAuthUsers: deletedFromAuth,
-      deletedLocalUsers: deletedFromLocal,
     };
   }
 }
