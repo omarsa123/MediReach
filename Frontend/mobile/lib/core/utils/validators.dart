@@ -47,19 +47,34 @@ class Validators {
   }
 
   static String? password(String? value, {int minLength = 8}) {
-    final v = value ?? '';
-    if (v.isEmpty) return 'Please enter a password';
-    if (v.length < minLength) {
-      return 'Password must be at least $minLength characters';
-    }
-    if (!RegExp(r'[A-Za-z]').hasMatch(v)) {
-      return 'Password must contain at least one letter';
-    }
-    if (!RegExp(r'[0-9]').hasMatch(v)) {
-      return 'Password must contain at least one number';
-    }
-    return null;
+  final v = value ?? '';
+
+  if (v.isEmpty) {
+    return 'Please enter a password';
   }
+
+  if (v.length < minLength) {
+    return 'Password must be at least $minLength characters';
+  }
+
+  if (!RegExp(r'[A-Z]').hasMatch(v)) {
+    return 'Password must contain at least one uppercase letter';
+  }
+
+  if (!RegExp(r'[a-z]').hasMatch(v)) {
+    return 'Password must contain at least one lowercase letter';
+  }
+
+  if (!RegExp(r'[0-9]').hasMatch(v)) {
+    return 'Password must contain at least one number';
+  }
+
+  if (!RegExp(r'[!@#$%^&*(),.?":{}|<>_\-+=/\\[\];`~]').hasMatch(v)) {
+    return 'Password must contain at least one special character';
+  }
+
+  return null;
+}
 
   static String? confirmPassword(String? value, String password) {
     if (value == null || value.isEmpty) {
