@@ -4,6 +4,10 @@ import 'package:MediReach/feature/auth/presentation/view/select_role.dart';
 import 'package:MediReach/feature/auth/presentation/view/splash_view.dart';
 import 'package:MediReach/feature/auth/widgets/onboarding_page.dart';
 import 'package:MediReach/feature/doctor/presentation/view/doctor_dashboard_view.dart';
+import 'package:MediReach/feature/doctor/presentation/view/doctor_main_view.dart';
+
+
+
 
 class Medireach extends StatelessWidget {
   const Medireach({super.key});
@@ -19,7 +23,7 @@ class Medireach extends StatelessWidget {
         '/onboarding' :(context) => OnbardingView(),
         '/select_role'  :(context) => SelectRole(),
       },
-      home: DoctorDashboardView(),
+      home: DoctorMainView(),
     );
   }
 }

@@ -38,4 +38,10 @@ abstract final class AppColors {
   static const dashNavBorder = Color(0xFFE8F3F4);
   static const dashPending = Color(0xFFEAA52F);
 
+  // Appointment details
+  static const dashPatientBg = Color(0xFFF1FBFB);
+  static const dashChipBg = Color(0xFFE7F6F5);
+  static const dashDangerBg = Color(0xFFFDE9EB);
+  static const dashDanger = Color(0xFFED7983);
+
 }

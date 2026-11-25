@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../../data/models/appointment_model.dart';
 import '../../widgets/appointment_card.dart';
 import '../../widgets/dashboard_header.dart';
-import '../../widgets/doctor_buttom_nav.dart';
 import '../../widgets/overview_card.dart';
 import '../../widgets/quick_action_button.dart';
 import '../../widgets/section_header.dart';
@@ -16,7 +15,6 @@ class DoctorDashboardView extends StatefulWidget {
 }
 
 class _DoctorDashboardViewState extends State<DoctorDashboardView> {
-  int _currentIndex = 0;
 
   // داتا تجريبية، هتتبدل بداتا الـ API
   static const _appointments = [
@@ -121,10 +119,6 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
             ),
           ],
         ),
-      ),
-      bottomNavigationBar: DoctorBottomNav(
-        currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
       ),
     );
   }
