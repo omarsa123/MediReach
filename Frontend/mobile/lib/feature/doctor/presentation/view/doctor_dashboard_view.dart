@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../../feature/auth/presentation/cubit/auth_cubit.dart';
-import '../../../../feature/auth/presentation/cubit/auth_state.dart';
 import '../../data/models/appointment_model.dart';
 import '../../widgets/appointment_card.dart';
 import '../../widgets/dashboard_header.dart';
-import '../../widgets/doctor_buttom_nav.dart';
 import '../../widgets/overview_card.dart';
 import '../../widgets/quick_action_button.dart';
 import '../../widgets/section_header.dart';
@@ -19,7 +15,6 @@ class DoctorDashboardView extends StatefulWidget {
 }
 
 class _DoctorDashboardViewState extends State<DoctorDashboardView> {
-  int _currentIndex = 0;
 
   // داتا تجريبية، هتتبدل بداتا الـ API
   static const _appointments = [
@@ -43,55 +38,18 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
     ),
   ];
 
-  void _confirmSignOut() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Sign out'),
-        content: const Text('Are you sure you want to sign out?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              context.read<AuthCubit>().logout();
-              Navigator.pushNamedAndRemoveUntil(
-                context,
-                '/provider_login',
-                (route) => false,
-              );
-            },
-            child: const Text('Sign out', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final authState = context.watch<AuthCubit>().state;
-    String doctorName = 'Dr. Sarah Johnson';
-    if (authState is AuthAuthenticated) {
-      doctorName = authState.user.name.startsWith('Dr.')
-          ? authState.user.name
-          : 'Dr. ${authState.user.name}';
-    }
-
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
           children: [
-            DashboardHeader(onBellTap: _confirmSignOut),
+            const DashboardHeader(),
             const SizedBox(height: 24),
-            WelcomeBanner(
-              doctorName: doctorName,
-              onBellTap: _confirmSignOut,
+            const WelcomeBanner(
+              doctorName: 'Dr. Sarah Johnson',
               // imagePath: AppAssets.doctorImage,
             ),
             const SizedBox(height: 24),
@@ -161,16 +119,6 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
             ),
           ],
         ),
-      ),
-      bottomNavigationBar: DoctorBottomNav(
-        currentIndex: _currentIndex,
-        onTap: (i) {
-          if (i == 4) {
-            _confirmSignOut();
-          } else {
-            setState(() => _currentIndex = i);
-          }
-        },
       ),
     );
   }

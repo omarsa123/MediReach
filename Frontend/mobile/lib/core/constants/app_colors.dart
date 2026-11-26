@@ -47,4 +47,8 @@ abstract final class AppColors {
   static const tealPrimary = Color(0xFF009794);
   static const tealLight = Color(0xFFE6F7F6);
   static const tealBadge = Color(0xFFE0F2F1);
+  static const dashPatientBg = Color(0xFFF1FBFB);
+  static const dashChipBg = Color(0xFFE7F6F5);
+  static const dashDangerBg = Color(0xFFFDE9EB);
+  static const dashDanger = Color(0xFFED7983);
 }
