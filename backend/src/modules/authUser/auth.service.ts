@@ -113,6 +113,38 @@ export class AuthService {
     if (role === "doctor") role = "provider";
     if (role === "organizer") role = "organization";
 
+    // Public signup must never be able to create administrator accounts.
+    if (!["patient", "provider", "organization"].includes(role)) {
+      throw { status: 400, message: "Unsupported registration role", code: "INVALID_ROLE" };
+    }
+    if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
+      throw { status: 400, message: "name is required", code: "NAME_REQUIRED" };
+    }
+    if (!body.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
+      throw { status: 400, message: "A valid email is required", code: "INVALID_EMAIL" };
+    }
+    if (!body.phone || typeof body.phone !== "string" || !body.phone.trim()) {
+      throw { status: 400, message: "phone is required", code: "PHONE_REQUIRED" };
+    }
+    if (role === "provider" && !body.licenseNumber) {
+      throw { status: 400, message: "licenseNumber is required for provider registration", code: "LICENSE_REQUIRED" };
+    }
+    if (role === "organization" && !body.licenseDocumentUrl) {
+      throw { status: 400, message: "licenseDocumentUrl is required for organization registration", code: "LICENSE_DOCUMENT_REQUIRED" };
+    }
+    if (role === "provider" && body.providerType && !["Doctor", "Nurse", "Physiotherapist", "LabSpecialist"].includes(body.providerType)) {
+      throw { status: 400, message: "providerType must be Doctor, Nurse, Physiotherapist, or LabSpecialist", code: "INVALID_PROVIDER_TYPE" };
+    }
+    if (role === "organization" && body.organizerType && !["Clinic", "Hospital", "Lab", "PhysiotherapyCenter"].includes(body.organizerType)) {
+      throw { status: 400, message: "Invalid organizerType", code: "INVALID_ORGANIZATION_TYPE" };
+    }
+    if (role === "patient" && body.gender && !["Female", "Male", "Other", "PreferNotToSay"].includes(body.gender)) {
+      throw { status: 400, message: "Invalid gender value", code: "INVALID_GENDER" };
+    }
+    if (role === "patient" && body.bloodType && !["A_Positive", "A_Negative", "B_Positive", "B_Negative", "AB_Positive", "AB_Negative", "O_Positive", "O_Negative", "Unknown"].includes(body.bloodType)) {
+      throw { status: 400, message: "Invalid bloodType value", code: "INVALID_BLOOD_TYPE" };
+    }
+
     let username = body.username;
     if (!username || typeof username !== "string" || username.trim() === "") {
       const base = (body.name || body.email?.split("@")[0] || "user")
@@ -761,5 +793,4 @@ export class AuthService {
       deletedFromLocal: deletedFromLocal.length,
     };
   }
-  
 }

@@ -124,6 +124,80 @@ export class ProviderController {
     },
   );
 
+  static updateSchedule = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      if (!user) {
+        res
+          .status(401)
+          .json(errorResponse("Not authenticated", "UNAUTHORIZED"));
+        return;
+      }
+
+      const scheduleId = Number(req.params.scheduleId);
+      if (!scheduleId) {
+        res
+          .status(400)
+          .json(errorResponse("scheduleId is required", "MISSING_SCHEDULE_ID"));
+        return;
+      }
+
+      const updated = await ProviderModel.updateSchedule(
+        user.userId,
+        scheduleId,
+        req.body,
+      );
+      if (!updated) {
+        res
+          .status(404)
+          .json(errorResponse("Schedule not found", "NOT_FOUND"));
+        return;
+      }
+
+      res.json(
+        successResponse({ schedule: updated }, "Schedule updated successfully"),
+      );
+    },
+  );
+
+  static deleteSchedule = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      if (!user) {
+        res
+          .status(401)
+          .json(errorResponse("Not authenticated", "UNAUTHORIZED"));
+        return;
+      }
+
+      const scheduleId = Number(req.params.scheduleId);
+      if (!scheduleId) {
+        res
+          .status(400)
+          .json(errorResponse("scheduleId is required", "MISSING_SCHEDULE_ID"));
+        return;
+      }
+
+      const deleted = await ProviderModel.deleteSchedule(
+        user.userId,
+        scheduleId,
+      );
+      if (!deleted) {
+        res
+          .status(404)
+          .json(errorResponse("Schedule not found", "NOT_FOUND"));
+        return;
+      }
+
+      res.json(
+        successResponse(
+          { schedule: deleted },
+          "Schedule deactivated successfully",
+        ),
+      );
+    },
+  );
+
   static listAppointments = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;

@@ -24,7 +24,6 @@ authRouter.post(
 authRouter.post("/reset-password", AuthController.resetPasswordWithOtp);
 authRouter.post("/reset-password-otp", AuthController.resetPasswordWithOtp);
 
-
 // 3. تأكيد البريد الإلكتروني والـ OTP
 authRouter.post("/verify-email", AuthController.verifyEmailOtp);
 authRouter.get("/verify-email", AuthController.verifyEmailOtp);

@@ -21,7 +21,7 @@ patientRouter.patch(
   PatientController.updateProfile,
 );
 
-// البحث والفلترة عن مقدمي الخدمة والخدمات
+// البحث والفلترة عن مقدمي الخدمة والخدمات والمواعيد المتاحة
 patientRouter.get(
   "/providers",
   requireAuth,
@@ -34,6 +34,12 @@ patientRouter.get(
   authorizeRoles("patient"),
   PatientController.getProviderDetails,
 );
+patientRouter.get(
+  "/providers/:providerId/availability",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.getProviderAvailability,
+);
 
 // الحجوزات
 patientRouter.get(
@@ -41,6 +47,12 @@ patientRouter.get(
   requireAuth,
   authorizeRoles("patient"),
   PatientController.listAppointments,
+);
+patientRouter.get(
+  "/appointments/:appointmentId",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.getAppointmentDetails,
 );
 patientRouter.post(
   "/appointments",
@@ -56,3 +68,9 @@ patientRouter.patch(
 );
 
 export { patientRouter };
+
+/* ============================================================================
+ * TODO [Patient Routes Remaining]:
+ * 1. GET /providers/:providerId/reviews -> إضافة الراوت بعد إنشاء جدول Review.
+ * 2. GET /services -> موجود بالفعل في service.routes.ts (/api/services) ولا يحتاج تكراره هنا.
+ * ============================================================================ */

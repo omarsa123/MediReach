@@ -18,37 +18,27 @@ export class AppointmentController {
         providerServiceId,
         appointmentDate,
         startTime,
-        endTime,
-        priceAtBooking,
         visitAddress,
         visitNotes,
       } = req.body;
 
-      if (
-        !providerServiceId ||
-        !appointmentDate ||
-        !startTime ||
-        !endTime ||
-        priceAtBooking === undefined
-      ) {
+      if (!providerServiceId || !appointmentDate || !startTime) {
         res
           .status(400)
           .json(
             errorResponse(
-              "providerServiceId, appointmentDate, startTime, endTime, priceAtBooking are required",
+              "providerServiceId, appointmentDate, and startTime are required (endTime and price are calculated by the server)",
               "MISSING_FIELDS",
             ),
           );
         return;
       }
 
-      const appointment = await AppointmentModel.create({
+      const appointment = await AppointmentModel.book({
         patientId: user.userId,
         providerServiceId: Number(providerServiceId),
         appointmentDate,
         startTime,
-        endTime,
-        priceAtBooking: Number(priceAtBooking),
         visitAddress,
         visitNotes,
       });
@@ -84,6 +74,14 @@ export class AppointmentController {
 
   static getById = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      if (!user) {
+        res
+          .status(401)
+          .json(errorResponse("Not authenticated", "UNAUTHORIZED"));
+        return;
+      }
+
       const id = req.params.id as string;
       const appointment = await AppointmentModel.findById(id);
       if (!appointment) {
@@ -92,6 +90,20 @@ export class AppointmentController {
           .json(errorResponse("Appointment not found", "NOT_FOUND"));
         return;
       }
+
+      // تحقق الملكية: المريض أو المزود أو الأدمن أو المؤسسة
+      const isPatient = appointment.patientId === user.userId;
+      const isProvider =
+        user.role === "provider" &&
+        (await AppointmentModel.isProviderOwner(id, user.userId));
+      const isPrivileged =
+        user.role === "admin" || user.role === "organization";
+
+      if (!isPatient && !isProvider && !isPrivileged) {
+        res.status(403).json(errorResponse("Forbidden", "FORBIDDEN"));
+        return;
+      }
+
       res.json(successResponse({ appointment }));
     },
   );
@@ -115,13 +127,14 @@ export class AppointmentController {
         return;
       }
 
-      // Simple ownership check for patient
-      if (
-        appointment.patientId !== user.userId &&
-        user.role !== "admin" &&
-        user.role !== "provider" &&
-        user.role !== "organization"
-      ) {
+      const isPatient = appointment.patientId === user.userId;
+      const isProvider =
+        user.role === "provider" &&
+        (await AppointmentModel.isProviderOwner(id, user.userId));
+      const isPrivileged =
+        user.role === "admin" || user.role === "organization";
+
+      if (!isPatient && !isProvider && !isPrivileged) {
         res.status(403).json(errorResponse("Forbidden", "FORBIDDEN"));
         return;
       }
@@ -135,6 +148,7 @@ export class AppointmentController {
               ? "Organizer"
               : "Admin";
 
+      // يستخدم transitionAppointmentStatus → يمنع إلغاء Completed مثلاً
       const updated = await AppointmentModel.updateStatus(
         id,
         "Cancelled",

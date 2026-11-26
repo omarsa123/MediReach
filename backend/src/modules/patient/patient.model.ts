@@ -1,4 +1,5 @@
 import { pool } from "../../config/dbconfig.js";
+import { bookAppointment } from "../appointment/appointment.service.js";
 
 export interface UpdatePatientInput {
   birthDate?: string;
@@ -16,8 +17,6 @@ export interface UpdatePatientInput {
     | string;
   allergies?: string;
   medicalHistory?: string;
-  // TODO [Patient Profile Image]: اختياري للمريض. عند رفع الصورة على Supabase Storage (bucket: profile-images)
-  // أو تحديد صورة افتراضية من الباكت، يتم تمرير الرابط كـ string وتحديثه في public."User"."profilePictureUrl".
   profilePictureUrl?: string | null;
 }
 
@@ -32,16 +31,59 @@ export interface ProviderSearchFilters {
     | string;
   deliveryMode?: "Online" | "InPerson" | "HomeVisit" | string;
   organizationId?: string;
+  serviceId?: number | string;
+  minPrice?: number;
   maxPrice?: number;
+  sortBy?: "price" | "name" | string;
+  order?: "asc" | "desc" | string;
+  page?: number;
+  limit?: number;
 }
 
 export interface CreateAppointmentInput {
   providerServiceId: number;
   appointmentDate: string; // YYYY-MM-DD
   startTime: string; // HH:MM or HH:MM:SS
-  endTime: string; // HH:MM or HH:MM:SS
+  /** @deprecated يُحسب من السيرفر — لا ترسله من العميل */
+  endTime?: string;
   visitAddress?: string | null;
   visitNotes?: string | null;
+}
+
+export interface ListAppointmentsFilters {
+  status?: string;
+  date?: string;
+  startDate?: string;
+  endDate?: string;
+  sortBy?: "date" | string;
+  order?: "asc" | "desc" | string;
+  page?: number;
+  limit?: number;
+}
+
+function timeToMinutes(t: string): number {
+  const parts = t.split(":").map(Number);
+  return (parts[0] || 0) * 60 + (parts[1] || 0);
+}
+
+function minutesToTime(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+}
+
+function getDayOfWeekName(dateStr: string): string {
+  const names = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  return names[d.getUTCDay()];
 }
 
 export class PatientModel {
@@ -73,7 +115,6 @@ export class PatientModel {
     try {
       await client.query("BEGIN");
 
-      // TODO [Patient Profile Image]: تحديث عمود "profilePictureUrl" في جدول "User" كرابط نصي (string)
       if (data.profilePictureUrl !== undefined) {
         await client.query(
           `UPDATE public."User"
@@ -128,7 +169,7 @@ export class PatientModel {
     }
   }
 
-  // البحث والفلترة عن مقدمي الخدمة والخدمات المتاحة لهم
+  // البحث والفلترة عن مقدمي الخدمة والخدمات المتاحة لهم مع الترتيب والـ Pagination
   static async searchProviders(filters: ProviderSearchFilters) {
     const conditions: string[] = [
       `u."status" = 'Active'`,
@@ -138,7 +179,7 @@ export class PatientModel {
     let idx = 1;
 
     if (filters.providerType) {
-      conditions.push(`pr."providerType" = $${idx++}`);
+      conditions.push(`LOWER(pr."providerType"::text) = LOWER($${idx++})`);
       values.push(filters.providerType.trim());
     }
 
@@ -155,6 +196,16 @@ export class PatientModel {
     if (filters.organizationId) {
       conditions.push(`pa."organizerId" = $${idx++}`);
       values.push(filters.organizationId.trim());
+    }
+
+    if (filters.serviceId !== undefined && filters.serviceId !== "") {
+      conditions.push(`s."serviceId" = $${idx++}`);
+      values.push(Number(filters.serviceId));
+    }
+
+    if (filters.minPrice !== undefined && !Number.isNaN(filters.minPrice)) {
+      conditions.push(`os."price" >= $${idx++}`);
+      values.push(filters.minPrice);
     }
 
     if (filters.maxPrice !== undefined && !Number.isNaN(filters.maxPrice)) {
@@ -175,6 +226,19 @@ export class PatientModel {
 
     const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
+    const direction =
+      String(filters.order || "asc").toLowerCase() === "desc" ? "DESC" : "ASC";
+    const orderByClause =
+      String(filters.sortBy || "").toLowerCase() === "price"
+        ? `ORDER BY os."price" ${direction} NULLS LAST, u."name" ASC`
+        : `ORDER BY u."name" ${direction}`;
+
+    const page = Math.max(1, Number(filters.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(filters.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    values.push(limit, offset);
+
     const result = await pool.query(
       `SELECT DISTINCT
          pr."userId" AS "providerId",
@@ -186,6 +250,8 @@ export class PatientModel {
          pr."experienceYears",
          pr."verificationStatus",
          pr."profilePictureUrl",
+         0 AS "rating",
+         0 AS "reviewCount",
          o."userId" AS "organizationId",
          o."organizationName",
          o."organizerType",
@@ -193,6 +259,7 @@ export class PatientModel {
          ps."deliveryMode",
          os."price",
          os."durationMinutes",
+         s."serviceId",
          s."name" AS "serviceName",
          s."serviceType"
        FROM public."Provider" pr
@@ -200,15 +267,20 @@ export class PatientModel {
        LEFT JOIN public."ProviderAssignment" pa
          ON pa."providerId" = pr."userId" AND pa."status" = 'Approved'
        LEFT JOIN public."Organization" o
-         ON o."userId" = pa."organizerId" AND o."verificationStatus" = 'Approved'
+         ON o."userId" = pa."organizerId"
+        AND o."verificationStatus" = 'Approved'
+       LEFT JOIN public."User" u_org
+         ON u_org."userId" = o."userId" AND u_org."status" = 'Active'
        LEFT JOIN public."ProviderService" ps
          ON ps."assignmentId" = pa."assignmentId" AND ps."isActive" = TRUE
+         AND o."userId" IS NOT NULL AND u_org."userId" IS NOT NULL
        LEFT JOIN public."OrganizerService" os
          ON os."organizerServiceId" = ps."organizerServiceId" AND os."isActive" = TRUE
        LEFT JOIN public."Service" s
          ON s."serviceId" = os."serviceId" AND s."isAvailable" = TRUE
        ${whereClause}
-       ORDER BY u."name" ASC`,
+       ${orderByClause}
+       LIMIT $${idx++} OFFSET $${idx}`,
       values,
     );
 
@@ -228,10 +300,14 @@ export class PatientModel {
          pr."qualification",
          pr."experienceYears",
          pr."verificationStatus",
-         pr."profilePictureUrl"
+         pr."profilePictureUrl",
+         0 AS "rating",
+         0 AS "reviewCount"
        FROM public."Provider" pr
        JOIN public."User" u ON u."userId" = pr."userId"
        WHERE pr."userId" = $1
+         AND pr."verificationStatus" = 'Approved'
+         AND u."status" = 'Active'
        LIMIT 1`,
       [providerId],
     );
@@ -260,6 +336,9 @@ export class PatientModel {
          ON s."serviceId" = os."serviceId" AND s."isAvailable" = TRUE
        JOIN public."Organization" o
          ON o."userId" = pa."organizerId"
+        AND o."verificationStatus" = 'Approved'
+       JOIN public."User" u_org
+         ON u_org."userId" = o."userId" AND u_org."status" = 'Active'
        WHERE pa."providerId" = $1 AND pa."status" = 'Approved'`,
       [providerId],
     );
@@ -289,107 +368,184 @@ export class PatientModel {
     };
   }
 
-  // حجز موعد جديد مع جلب السعر الفعلي من OrganizerService والتحقق من التعارض
+  // حساب الفترات الزمنية المتاحة للحجز لمزود معين وخدمة معينة في تاريخ محدد
+  static async getProviderAvailability(
+    providerId: string,
+    serviceId: number,
+    date: string,
+  ) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw {
+        status: 400,
+        message: "date must use YYYY-MM-DD format",
+        code: "INVALID_DATE",
+      };
+    }
+
+    const dayOfWeek = getDayOfWeekName(date);
+
+    // 1. جلب بيانات الخدمة المقدمة من هذا المزود (المدة ونوع التقديم والسعر)
+    const psRes = await pool.query(
+      `SELECT
+         ps."providerServiceId",
+         ps."deliveryMode",
+         pa."assignmentId",
+         os."durationMinutes",
+         os."price"
+       FROM public."ProviderService" ps
+       JOIN public."OrganizerService" os
+         ON os."organizerServiceId" = ps."organizerServiceId" AND os."isActive" = TRUE
+       JOIN public."ProviderAssignment" pa
+         ON pa."assignmentId" = ps."assignmentId" AND pa."status" = 'Approved'
+       WHERE pa."providerId" = $1
+         AND (os."serviceId" = $2 OR ps."providerServiceId" = $2)
+         AND ps."isActive" = TRUE`,
+      [providerId, serviceId],
+    );
+
+    if (psRes.rows.length === 0) {
+      throw {
+        status: 404,
+        message: "This provider does not offer the selected service",
+        code: "SERVICE_NOT_OFFERED",
+      };
+    }
+
+    // 2. جلب جداول العمل لهذا اليوم
+    const schedulesRes = await pool.query(
+      `SELECT sc."assignmentId", sc."startTime", sc."endTime", sc."deliveryMode"
+       FROM public."Schedule" sc
+       JOIN public."ProviderAssignment" pa
+         ON pa."assignmentId" = sc."assignmentId"
+       WHERE pa."providerId" = $1
+         AND pa."status" = 'Approved'
+         AND sc."isActive" = TRUE
+         AND sc."dayOfWeek" = $2`,
+      [providerId, dayOfWeek],
+    );
+
+    if (schedulesRes.rows.length === 0) {
+      return [];
+    }
+
+    // 3. جلب كل المواعيد المحجوزة غير الملغاة لهذا المزود في نفس التاريخ
+    const bookedRes = await pool.query(
+      `SELECT a."startTime", a."endTime"
+       FROM public."Appointment" a
+       JOIN public."ProviderService" ps2
+         ON ps2."providerServiceId" = a."providerServiceId"
+       JOIN public."ProviderAssignment" pa2
+         ON pa2."assignmentId" = ps2."assignmentId"
+       WHERE pa2."providerId" = $1
+         AND a."appointmentDate" = $2
+         AND a."status" <> 'Cancelled'`,
+      [providerId, date],
+    );
+
+    const bookedRanges = bookedRes.rows.map((b) => ({
+      start: timeToMinutes(String(b.startTime)),
+      end: timeToMinutes(String(b.endTime)),
+    }));
+
+    const availableSlots: Array<{
+      providerServiceId: number;
+      deliveryMode: string;
+      price: number;
+      startTime: string;
+      endTime: string;
+    }> = [];
+
+    for (const ps of psRes.rows) {
+      const duration = Number(ps.durationMinutes) || 30;
+      const matchingSchedules = schedulesRes.rows.filter(
+        (sc) =>
+          sc.assignmentId === ps.assignmentId &&
+          (!sc.deliveryMode || sc.deliveryMode === ps.deliveryMode),
+      );
+
+      for (const sc of matchingSchedules) {
+        let cursor = timeToMinutes(String(sc.startTime));
+        const limitEnd = timeToMinutes(String(sc.endTime));
+
+        while (cursor + duration <= limitEnd) {
+          const slotStart = cursor;
+          const slotEnd = cursor + duration;
+
+          const hasConflict = bookedRanges.some(
+            (b) => slotStart < b.end && slotEnd > b.start,
+          );
+
+          if (!hasConflict) {
+            availableSlots.push({
+              providerServiceId: ps.providerServiceId,
+              deliveryMode: ps.deliveryMode,
+              price: Number(ps.price),
+              startTime: minutesToTime(slotStart),
+              endTime: minutesToTime(slotEnd),
+            });
+          }
+          cursor += duration;
+        }
+      }
+    }
+
+    return availableSlots;
+  }
+
+  /**
+   * حجز موعد جديد — يفوض للمنطق الموحد في appointment.service
+   */
   static async createAppointment(
     patientId: string,
     input: CreateAppointmentInput,
   ) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      const serviceRes = await client.query(
-        `SELECT
-           ps."providerServiceId",
-           ps."isActive" AS "psActive",
-           os."price",
-           os."isActive" AS "osActive"
-         FROM public."ProviderService" ps
-         JOIN public."OrganizerService" os
-           ON os."organizerServiceId" = ps."organizerServiceId"
-         WHERE ps."providerServiceId" = $1
-         LIMIT 1`,
-        [input.providerServiceId],
-      );
-
-      if (serviceRes.rows.length === 0) {
-        throw {
-          status: 404,
-          message: "Provider service not found",
-          code: "SERVICE_NOT_FOUND",
-        };
-      }
-
-      const svc = serviceRes.rows[0];
-      if (!svc.psActive || !svc.osActive) {
-        throw {
-          status: 400,
-          message: "This service is currently unavailable",
-          code: "SERVICE_UNAVAILABLE",
-        };
-      }
-
-      const conflictRes = await client.query(
-        `SELECT 1
-         FROM public."Appointment"
-         WHERE "providerServiceId" = $1
-           AND "appointmentDate" = $2
-           AND "status" IN ('Pending', 'Confirmed', 'InProgress')
-           AND ("startTime" < $4 AND "endTime" > $3)
-         LIMIT 1`,
-        [
-          input.providerServiceId,
-          input.appointmentDate,
-          input.startTime,
-          input.endTime,
-        ],
-      );
-
-      if (conflictRes.rows.length > 0) {
-        throw {
-          status: 409,
-          message: "This time slot is already booked",
-          code: "SLOT_UNAVAILABLE",
-        };
-      }
-
-      const insertRes = await client.query(
-        `INSERT INTO public."Appointment"
-          ("patientId", "providerServiceId", "appointmentDate", "startTime", "endTime",
-           "status", "priceAtBooking", "visitAddress", "visitNotes")
-         VALUES ($1, $2, $3, $4, $5, 'Pending', $6, $7, $8)
-         RETURNING *`,
-        [
-          patientId,
-          input.providerServiceId,
-          input.appointmentDate,
-          input.startTime,
-          input.endTime,
-          svc.price,
-          input.visitAddress ?? null,
-          input.visitNotes ?? null,
-        ],
-      );
-
-      await client.query("COMMIT");
-      return insertRes.rows[0];
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    return bookAppointment({
+      patientId,
+      providerServiceId: input.providerServiceId,
+      appointmentDate: input.appointmentDate,
+      startTime: input.startTime,
+      visitAddress: input.visitAddress,
+      visitNotes: input.visitNotes,
+    });
   }
 
-  // عرض حجوزات المريض مع بيانات الطبيب والخدمة
-  static async listAppointments(patientId: string, status?: string) {
+  // عرض حجوزات المريض مع الفلترة بالتاريخ والحالة والترتيب والـ Pagination
+  static async listAppointments(
+    patientId: string,
+    filters: ListAppointmentsFilters = {},
+  ) {
+    const conditions: string[] = [`a."patientId" = $1`];
     const params: unknown[] = [patientId];
-    let statusFilter = "";
+    let idx = 2;
 
-    if (status) {
-      statusFilter = ` AND a."status" = $2`;
-      params.push(status.trim());
+    if (filters.status) {
+      conditions.push(`LOWER(a."status"::text) = LOWER($${idx++})`);
+      params.push(filters.status.trim());
     }
+
+    if (filters.date) {
+      conditions.push(`a."appointmentDate" = $${idx++}`);
+      params.push(filters.date.trim());
+    }
+
+    if (filters.startDate) {
+      conditions.push(`a."appointmentDate" >= $${idx++}`);
+      params.push(filters.startDate.trim());
+    }
+
+    if (filters.endDate) {
+      conditions.push(`a."appointmentDate" <= $${idx++}`);
+      params.push(filters.endDate.trim());
+    }
+
+    const direction =
+      String(filters.order || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+
+    const page = Math.max(1, Number(filters.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(filters.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    params.push(limit, offset);
 
     const result = await pool.query(
       `SELECT
@@ -406,6 +562,7 @@ export class PatientModel {
          a."visitAddress",
          a."visitNotes",
          ps."deliveryMode",
+         s."serviceId",
          s."name" AS "serviceName",
          s."serviceType",
          pr."userId" AS "providerId",
@@ -428,12 +585,62 @@ export class PatientModel {
          ON u."userId" = pr."userId"
        JOIN public."Organization" o
          ON o."userId" = pa."organizerId"
-       WHERE a."patientId" = $1 ${statusFilter}
-       ORDER BY a."appointmentDate" DESC, a."startTime" DESC`,
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY a."appointmentDate" ${direction}, a."startTime" ${direction}
+       LIMIT $${idx++} OFFSET $${idx}`,
       params,
     );
 
     return result.rows;
+  }
+
+  // جلب تفاصيل حجز محدد للمريض
+  static async getAppointmentById(patientId: string, appointmentId: string) {
+    const result = await pool.query(
+      `SELECT
+         a."appointmentId",
+         a."patientId",
+         a."providerServiceId",
+         a."appointmentDate",
+         a."startTime",
+         a."endTime",
+         a."status",
+         a."priceAtBooking",
+         a."createdAt",
+         a."cancelledBy",
+         a."visitAddress",
+         a."visitNotes",
+         ps."deliveryMode",
+         s."serviceId",
+         s."name" AS "serviceName",
+         s."serviceType",
+         pr."userId" AS "providerId",
+         u."name" AS "providerName",
+         pr."specialization",
+         pr."profilePictureUrl" AS "providerProfilePicture",
+         o."userId" AS "organizationId",
+         o."organizationName"
+       FROM public."Appointment" a
+       JOIN public."ProviderService" ps
+         ON ps."providerServiceId" = a."providerServiceId"
+       JOIN public."OrganizerService" os
+         ON os."organizerServiceId" = ps."organizerServiceId"
+       JOIN public."Service" s
+         ON s."serviceId" = os."serviceId"
+       JOIN public."ProviderAssignment" pa
+         ON pa."assignmentId" = ps."assignmentId"
+       JOIN public."Provider" pr
+         ON pr."userId" = pa."providerId"
+       JOIN public."User" u
+         ON u."userId" = pr."userId"
+       JOIN public."Organization" o
+         ON o."userId" = pa."organizerId"
+       WHERE a."appointmentId" = $1 AND a."patientId" = $2
+       LIMIT 1`,
+      [appointmentId, patientId],
+    );
+
+    return result.rows[0] || null;
   }
 
   // إلغاء حجز بواسطة المريض
@@ -451,3 +658,15 @@ export class PatientModel {
     return result.rows[0] || null;
   }
 }
+
+/* ============================================================================
+ * TODO [Patient Module Remaining Requirements - Missing DB Tables / Endpoints]:
+ * 1. Reviews & Ratings System:
+ *    - لا يوجد جدول Review في قاعدة البيانات حتى الآن.
+ *    - بمجرد إنشاء جدول Review (يحتوي على reviewId, appointmentId, patientId, providerId, rating, comment, createdAt):
+ *      * يجب إنشاء endpoint: GET /providers/:providerId/reviews (مع Pagination).
+ *      * تحديث searchProviders و getProviderDetails لحساب AVG(rating) و COUNT(*) الفعلي بدلاً من القيمة الافتراضية 0.
+ *      * تفعيل فلتر minRating والترتيب sortBy=rating في searchProviders.
+ * 2. Provider Bio Field:
+ *    - وثيقة الـ API تطلب حقل "bio" في getProviderDetails؛ يجب إضافته لجدول Provider في الداتابيز إذا لزم الأمر.
+ * ============================================================================ */

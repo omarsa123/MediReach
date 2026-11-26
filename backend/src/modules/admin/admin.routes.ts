@@ -1,20 +1,39 @@
 import { Router } from "express";
 import { AdminController } from "./admin.controller.js";
-import { requireAuth, authorizeRoles } from "../../middleware/auth.middleware.js";
+import {
+  authorizeRoles,
+  requireAuth,
+} from "../../middleware/auth.middleware.js";
 
 const adminRouter = Router();
 
-// نطبق حماية على كل مسارات الأدمن (لازم يكون عامل لوجين والرول بتاعته admin)
 adminRouter.use(requireAuth, authorizeRoles("admin"));
 
-// مسارات الإحصائيات والمنظمات
-adminRouter.get("/stats", AdminController.getStats);
-adminRouter.get("/pending-organizations", AdminController.getPendingOrganizations);
-adminRouter.post("/verify-organization", AdminController.verifyOrganization);
-adminRouter.get("/organizations", AdminController.getAllOrganizations);
+// New web endpoints
+adminRouter.get("/dashboard", AdminController.dashboard);
+// Compatibility endpoints used by the earlier mobile frontend
+adminRouter.get("/stats", AdminController.legacyStats);
+adminRouter.get("/pending-organizations", AdminController.legacyPendingOrganizations);
+adminRouter.post("/verify-organization", AdminController.legacyVerifyOrganization);
+adminRouter.get("/organizations", AdminController.legacyOrganizations);
+adminRouter.post("/toggle-user-status", AdminController.legacyToggleUserStatus);
 
-// مسارات إدارة المستخدمين
-adminRouter.get("/users", AdminController.getAllUsers);
-adminRouter.post("/toggle-user-status", AdminController.toggleUserStatus);
+adminRouter.get("/providers/pending", AdminController.listPendingProviders);
+adminRouter.patch(
+  "/providers/:providerId/verification",
+  AdminController.updateProviderVerification,
+);
+
+adminRouter.get(
+  "/organizations/pending",
+  AdminController.listPendingOrganizations,
+);
+adminRouter.patch(
+  "/organizations/:organizationId/verification",
+  AdminController.updateOrganizationVerification,
+);
+
+adminRouter.get("/users", AdminController.listUsers);
+adminRouter.patch("/users/:userId/status", AdminController.updateUserStatus);
 
 export { adminRouter };

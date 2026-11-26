@@ -1,4 +1,4 @@
-import { randomInt } from "node:crypto";
+import { randomInt, createHash, timingSafeEqual } from "node:crypto";
 import { pool } from "../../config/dbconfig.js";
 
 const DEFAULT_OTP_TTL_MS =
@@ -14,12 +14,13 @@ export class OtpService {
     code: string,
     ttlMs: number = DEFAULT_OTP_TTL_MS,
   ): Promise<void> {
+    const codeHash = createHash("sha256").update(code).digest("hex");
     await pool.query(
-      `INSERT INTO public."AuthOtp" ("key", "code", "expiresAt")
+      `INSERT INTO public."AuthOtp" ("key", "codeHash", "expiresAt")
        VALUES ($1, $2, NOW() + ($3::bigint * INTERVAL '1 millisecond'))
        ON CONFLICT ("key") DO UPDATE
-       SET "code" = EXCLUDED."code", "expiresAt" = EXCLUDED."expiresAt"`,
-      [key, code, ttlMs],
+       SET "codeHash" = EXCLUDED."codeHash", "expiresAt" = EXCLUDED."expiresAt"`,
+      [key, codeHash, ttlMs],
     );
   }
 
@@ -35,7 +36,7 @@ export class OtpService {
 
   static async getValid(key: string): Promise<string | null> {
     const result = await pool.query(
-      `SELECT "code" FROM public."AuthOtp"
+      `SELECT "codeHash" FROM public."AuthOtp"
        WHERE "key" = $1 AND "expiresAt" > NOW()`,
       [key],
     );
@@ -45,7 +46,9 @@ export class OtpService {
       return null;
     }
 
-    return String(result.rows[0].code);
+    // Stored hashes cannot be converted back to OTP codes; getValid is retained
+    // only for compatibility and verify() performs hash comparison.
+    return String(result.rows[0].codeHash);
   }
 
   static async verify(
@@ -55,8 +58,12 @@ export class OtpService {
     consume: boolean = false,
   ): Promise<boolean> {
     const key = `${prefix}_${email}`;
-    const stored = await this.getValid(key);
-    if (!stored || stored !== otp) return false;
+    const storedHash = await this.getValid(key);
+    if (!storedHash) return false;
+    const suppliedHash = createHash("sha256").update(otp).digest("hex");
+    const storedBuffer = Buffer.from(storedHash, "hex");
+    const suppliedBuffer = Buffer.from(suppliedHash, "hex");
+    if (storedBuffer.length !== suppliedBuffer.length || !timingSafeEqual(storedBuffer, suppliedBuffer)) return false;
 
     if (consume) {
       await this.clear(key);

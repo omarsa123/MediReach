@@ -1,4 +1,3 @@
-import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { UserModel } from "../../modules/user/user.model.js";
 import { toPublicUser } from "../../utils/response.utils.js";
@@ -94,7 +93,7 @@ export class GoogleAuthService {
   static async googleCallback(
     accessToken: string,
     _refreshToken: string,
-    expectedRole: string = "patient",
+    _expectedRole: string = "patient",
     code?: string,
   ) {
     let resolvedAccessToken = accessToken;
@@ -127,60 +126,60 @@ export class GoogleAuthService {
     }
 
     const supabaseUser = userData.user;
-    const requestedRole =
-      String(expectedRole).toLowerCase() === "provider"
-        ? "provider"
-        : "patient";
-    let user = await UserModel.findById(supabaseUser.id);
-
-    if (!user) {
-      const email = (supabaseUser.email || "").toLowerCase();
-      if (email) {
-        const byEmail = await UserModel.findByEmail(email);
-        if (byEmail) user = await UserModel.findById(byEmail.userId);
-      }
-    }
-
-    if (!user && requestedRole === "provider") {
+    const isGoogleIdentity =
+      supabaseUser.app_metadata?.provider === "google" ||
+      (supabaseUser.identities || []).some(
+        (identity) => identity.provider === "google",
+      );
+    if (!isGoogleIdentity) {
       throw {
-        status: 404,
-        message: "No provider account found for this Google email.",
-        code: "PROVIDER_ACCOUNT_NOT_FOUND",
+        status: 403,
+        message: "This authentication flow only accepts Google accounts.",
+        code: "GOOGLE_IDENTITY_REQUIRED",
       };
     }
 
+    const email = (supabaseUser.email || "").trim().toLowerCase();
+    if (!email || !supabaseUser.email_confirmed_at) {
+      throw {
+        status: 403,
+        message: "A verified Google email is required.",
+        code: "GOOGLE_EMAIL_NOT_VERIFIED",
+      };
+    }
+
+    let user = await UserModel.findById(supabaseUser.id);
+
+    // Existing local accounts may have been created before Google was linked.
+    // Only use an email match after Supabase confirms the Google email.
+    if (!user) {
+      const byEmail = await UserModel.findByEmail(email);
+      if (byEmail) user = await UserModel.findById(byEmail.userId);
+    }
+
+    // Do not silently create a Patient account. Ask the client to collect
+    // the intended role and the role-specific registration data first.
     if (!user) {
       const meta = supabaseUser.user_metadata ?? {};
-      const email = supabaseUser.email ?? meta.email ?? "";
       const name =
         meta.full_name || meta.name || email.split("@")[0] || "Google User";
-      let username = (
-        meta.preferred_username ||
-        email.split("@")[0] ||
-        `user_${supabaseUser.id.slice(0, 8)}`
-      )
-        .replace(/[^a-zA-Z0-9_]/g, "_")
-        .slice(0, 60);
-
-      let finalUsername = username;
-      let attempt = 0;
-      while (await UserModel.isUsernameTaken(finalUsername)) {
-        attempt += 1;
-        finalUsername = `${username}_${attempt}`.slice(0, 60);
-      }
-
-      const defaultRandomHash = await bcrypt.hash("GOOGLE_OAUTH_USER_PASS", 10);
-      user = await UserModel.createFromAuth(
-        supabaseUser.id,
+      const registrationToken = jwt.sign(
         {
-          name,
-          username: finalUsername,
+          purpose: "google_registration",
+          supabaseUserId: supabaseUser.id,
           email,
-          phone: meta.phone || `g-${supabaseUser.id.slice(0, 10)}`,
-          role: "patient",
+          name,
         },
-        defaultRandomHash,
+        getJwtSecret(),
+        { expiresIn: "10m" },
       );
+
+      return {
+        isNewUser: true,
+        requiresRegistration: true,
+        registrationToken,
+        googleUser: { email, name },
+      };
     }
 
     const role = (user.role || "patient").toString().toLowerCase();

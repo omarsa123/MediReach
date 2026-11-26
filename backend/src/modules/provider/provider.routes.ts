@@ -34,6 +34,18 @@ providerRouter.post(
   authorizeRoles("provider"),
   ProviderController.createSchedule,
 );
+providerRouter.patch(
+  "/schedules/:scheduleId",
+  requireAuth,
+  authorizeRoles("provider"),
+  ProviderController.updateSchedule,
+);
+providerRouter.delete(
+  "/schedules/:scheduleId",
+  requireAuth,
+  authorizeRoles("provider"),
+  ProviderController.deleteSchedule,
+);
 
 // الحجوزات
 providerRouter.get(

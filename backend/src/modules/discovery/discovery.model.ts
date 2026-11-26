@@ -184,7 +184,39 @@ export class DiscoveryModel {
          AND u."status" = 'Active'`,
       [providerId],
     );
-    return result.rows[0] || null;
+    if (result.rows.length === 0) return null;
+
+    // خدمات نشطة فقط من مؤسسات معتمدة وحسابات نشطة
+    const servicesRes = await pool.query(
+      `SELECT
+         ps."providerServiceId",
+         ps."deliveryMode",
+         os."price",
+         os."durationMinutes",
+         s."serviceId",
+         s."name" AS "serviceName",
+         s."serviceType",
+         o."userId" AS "organizationId",
+         o."organizationName"
+       FROM public."ProviderAssignment" pa
+       JOIN public."ProviderService" ps
+         ON ps."assignmentId" = pa."assignmentId" AND ps."isActive" = TRUE
+       JOIN public."OrganizerService" os
+         ON os."organizerServiceId" = ps."organizerServiceId" AND os."isActive" = TRUE
+       JOIN public."Service" s
+         ON s."serviceId" = os."serviceId" AND s."isAvailable" = TRUE
+       JOIN public."Organization" o
+         ON o."userId" = pa."organizerId" AND o."verificationStatus" = 'Approved'
+       JOIN public."User" u_org
+         ON u_org."userId" = o."userId" AND u_org."status" = 'Active'
+       WHERE pa."providerId" = $1 AND pa."status" = 'Approved'`,
+      [providerId],
+    );
+
+    return {
+      ...result.rows[0],
+      services: servicesRes.rows,
+    };
   }
 
   static async listServices(filters: {

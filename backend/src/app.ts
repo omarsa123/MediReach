@@ -3,11 +3,24 @@ import cors from "cors";
 import helmet from "helmet";
 import dotenv from "dotenv";
 import { connectDB } from "./config/dbconfig.js";
+import { globalErrorHandler } from "./middleware/errorHandler.js";
+import { EmailService } from "./services/email.service.js";
+
+// Auth & User (خارج نطاق التعديل)
 import { authRouter } from "./modules/authUser/auth.routes.js";
 import { userRouter } from "./modules/user/user.routes.js";
+
+// Core modules
 import { patientRouter } from "./modules/patient/patient.routes.js";
 import { providerRouter } from "./modules/provider/provider.routes.js";
-import { EmailService } from "./services/email.service.js";
+import { organizationRouter } from "./modules/organization/organization.routes.js";
+import { appointmentRouter } from "./modules/appointment/appointment.routes.js";
+import { discoveryRouter } from "./modules/discovery/discovery.routes.js";
+import { medicalRouter } from "./modules/medical/medical.routes.js";
+import { notificationRouter } from "./modules/notification/notification.routes.js";
+import { paymentRouter } from "./modules/payment/payment.routes.js";
+import { rateRouter } from "./modules/rate/rate.routes.js";
+import { serviceRouter } from "./modules/service/service.routes.js";
 import { adminRouter } from "./modules/admin/admin.routes.js";
 
 dotenv.config();
@@ -16,7 +29,6 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 // ---------- Global middleware ----------
-
 app.use(helmet());
 app.use(
   cors({
@@ -56,10 +68,21 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 // ---------- Routes ----------
+// Auth & User
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/users", userRouter);
+
+// Core domain
 app.use("/api/v1/patients", patientRouter);
 app.use("/api/v1/providers", providerRouter);
+app.use("/api/v1/organizations", organizationRouter);
+app.use("/api/v1/appointments", appointmentRouter);
+app.use("/api/v1/discovery", discoveryRouter);
+app.use("/api/v1/medical", medicalRouter);
+app.use("/api/v1/notifications", notificationRouter);
+app.use("/api/v1/payments", paymentRouter);
+app.use("/api/v1/rates", rateRouter);
+app.use("/api/v1/services", serviceRouter);
 app.use("/api/v1/admin", adminRouter);
 
 // ---------- 404 ----------
@@ -71,23 +94,8 @@ app.use((_req, res) => {
   });
 });
 
-// ---------- Global error handler ----------
-app.use(
-  (
-    err: any,
-    _req: express.Request,
-    res: express.Response,
-    _next: express.NextFunction,
-  ) => {
-    console.error("[GlobalError]", err);
-    const statusCode = err.status || err.statusCode || 500;
-    res.status(statusCode).json({
-      success: false,
-      message: err.message || "Internal server error",
-      code: err.code || "INTERNAL",
-    });
-  },
-);
+// ---------- Global error handler (موحد) ----------
+app.use(globalErrorHandler);
 
 // ---------- Start ----------
 const startServer = async () => {
@@ -96,10 +104,20 @@ const startServer = async () => {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`🚀 MedReach API server is running on port ${PORT}`);
       console.log(`   Environment: ${process.env.NODE_ENV ?? "development"}`);
-      console.log(`   Auth base path: /api/v1/auth`);
-      console.log(`   Users base path: /api/v1/users`);
-      console.log(`   Patients base path: /api/v1/patients`);
-      console.log(`   Providers base path: /api/v1/providers`);
+      console.log(`   Routes mounted:`);
+      console.log(`     /api/v1/auth`);
+      console.log(`     /api/v1/users`);
+      console.log(`     /api/v1/patients`);
+      console.log(`     /api/v1/providers`);
+      console.log(`     /api/v1/organizations`);
+      console.log(`     /api/v1/appointments`);
+      console.log(`     /api/v1/discovery`);
+      console.log(`     /api/v1/medical`);
+      console.log(`     /api/v1/notifications`);
+      console.log(`     /api/v1/payments`);
+      console.log(`     /api/v1/rates`);
+      console.log(`     /api/v1/services`);
+      console.log(`     /api/v1/admin`);
     });
   } catch (error) {
     console.error("Failed to start server:", error);
