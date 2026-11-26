@@ -31,6 +31,8 @@ abstract class AuthRemoteDataSource {
 
   Future<String> getGoogleAuthUrl({required String role});
 
+  Future<AuthResponseModel> registerWithGoogle(Map<String, dynamic> payload);
+
   Future<AuthResponseModel> googleCallback({
     String? accessToken,
     String? refreshToken,
@@ -217,7 +219,7 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
   @override
   Future<String> getGoogleAuthUrl({required String role}) async {
     final response = await _apiClient.get(
-      '/api/v1/auth/google-url',
+      '/api/v1/auth/google/url',
       queryParameters: {'role': role},
     );
 
@@ -229,7 +231,19 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
   }
 
   /// Complete Google OAuth callback.
+  /// Register a new user using Google authentication.
   @override
+  Future<AuthResponseModel> registerWithGoogle(
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _apiClient.post(
+      '/api/v1/auth/google/register',
+      body: payload,
+    );
+
+    return AuthResponseModel.fromJson(_toMap(response));
+  }
+
   Future<AuthResponseModel> googleCallback({
     String? accessToken,
     String? refreshToken,

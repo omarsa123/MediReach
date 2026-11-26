@@ -1,85 +1,76 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../../feature/auth/presentation/cubit/auth_cubit.dart';
-import '../../../../feature/auth/presentation/cubit/auth_state.dart';
+import 'package:medireach/feature/doctor/data/models/appointment_details_model.dart';
+import 'package:medireach/feature/doctor/data/models/patient_details_model.dart';
+import 'package:medireach/feature/doctor/presentation/view/doctor_appointment_details_view.dart';
 import '../../data/models/appointment_model.dart';
 import '../../widgets/appointment_card.dart';
 import '../../widgets/dashboard_header.dart';
-import '../../widgets/doctor_buttom_nav.dart';
 import '../../widgets/overview_card.dart';
 import '../../widgets/quick_action_button.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/welcome_banner.dart';
 
 class DoctorDashboardView extends StatefulWidget {
-  const DoctorDashboardView({super.key});
+  const DoctorDashboardView({
+    super.key,
+    this.doctorName = '',
+    this.doctorImagePath,
+    this.appointments = const [],
+    this.appointmentsCount = 0,
+    this.patientsCount = 0,
+    this.earningsLabel = '\$0',
+    this.onSeeAllAppointments,
+    this.onOpenAppointmentsTab,
+    this.onOpenPatientsTab,
+    this.onSelectPatient,
+    this.onAppointmentUpdated,
+  });
+
+  final String doctorName;
+  final String? doctorImagePath;
+  final List<AppointmentModel> appointments;
+  final int appointmentsCount;
+  final int patientsCount;
+  final String earningsLabel;
+  final VoidCallback? onSeeAllAppointments;
+  final VoidCallback? onOpenAppointmentsTab;
+  final VoidCallback? onOpenPatientsTab;
+  final ValueChanged<PatientDetailsModel>? onSelectPatient;
+  final ValueChanged<AppointmentModel>? onAppointmentUpdated;
 
   @override
   State<DoctorDashboardView> createState() => _DoctorDashboardViewState();
 }
 
 class _DoctorDashboardViewState extends State<DoctorDashboardView> {
-  int _currentIndex = 0;
+  Future<void> _openAppointment(AppointmentModel appt) async {
+    // TODO: اربطها بـ GET /api/v1/appointments/${appt.id}
+    final details = AppointmentDetailsModel.fromAppointmentAndJson(
+      appt,
+      const {},
+    );
 
-  // داتا تجريبية، هتتبدل بداتا الـ API
-  static const _appointments = [
-    AppointmentModel(
-      id: '1',
-      patientName: 'Ahmed Mohamed',
-      type: 'General consultation',
-      durationMinutes: 30,
-      dateLabel: '24 Jun 2026 · 10:00 AM',
-      status: AppointmentStatus.confirmed,
-      // imagePath: AppAssets.patient1,
-    ),
-    AppointmentModel(
-      id: '2',
-      patientName: 'Mona Hassan',
-      type: 'General consultation',
-      durationMinutes: 30,
-      dateLabel: '24 Jun 2026 · 11:30 AM',
-      status: AppointmentStatus.pending,
-      // imagePath: AppAssets.patient2,
-    ),
-  ];
-
-  void _confirmSignOut() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Sign out'),
-        content: const Text('Are you sure you want to sign out?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              context.read<AuthCubit>().logout();
-              Navigator.pushNamedAndRemoveUntil(
-                context,
-                '/provider_login',
-                (route) => false,
-              );
-            },
-            child: const Text('Sign out', style: TextStyle(color: Colors.red)),
-          ),
-        ],
+    final updated = await Navigator.push<AppointmentDetailsModel>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DoctorAppointmentDetailsView(
+          details: details,
+          onViewPatient: widget.onSelectPatient,
+        ),
       ),
     );
+
+    if (updated != null && mounted) {
+      widget.onAppointmentUpdated?.call(appt.copyWith(status: updated.status));
+      setState(() {});
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final authState = context.watch<AuthCubit>().state;
-    String doctorName = 'Dr. Sarah Johnson';
-    if (authState is AuthAuthenticated) {
-      doctorName = authState.user.name.startsWith('Dr.')
-          ? authState.user.name
-          : 'Dr. ${authState.user.name}';
-    }
+    final displayName = widget.doctorName.trim().isNotEmpty
+        ? widget.doctorName.trim()
+        : 'Doctor';
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -87,38 +78,34 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
           children: [
-            DashboardHeader(onBellTap: _confirmSignOut),
+            const DashboardHeader(),
             const SizedBox(height: 24),
-            WelcomeBanner(
-              doctorName: doctorName,
-              onBellTap: _confirmSignOut,
-              // imagePath: AppAssets.doctorImage,
-            ),
+            WelcomeBanner(doctorName: displayName),
             const SizedBox(height: 24),
             const SectionHeader(title: 'Today’s overview'),
             const SizedBox(height: 14),
-            const Row(
+            Row(
               children: [
                 Expanded(
                   child: OverviewCard(
                     icon: Icons.calendar_month_outlined,
-                    value: '12',
+                    value: '${widget.appointmentsCount}',
                     label: 'Appointments',
                   ),
                 ),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Expanded(
                   child: OverviewCard(
                     icon: Icons.people_outline,
-                    value: '08',
+                    value: '${widget.patientsCount}',
                     label: 'Patients',
                   ),
                 ),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Expanded(
                   child: OverviewCard(
                     icon: Icons.account_balance_wallet_outlined,
-                    value: '\$420',
+                    value: widget.earningsLabel,
                     label: 'Earnings',
                   ),
                 ),
@@ -128,15 +115,26 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
             SectionHeader(
               title: 'Upcoming appointments',
               actionLabel: 'See all',
-              onActionTap: () {
-                // TODO: navigate to appointments
-              },
+              onActionTap:
+                  widget.onSeeAllAppointments ?? widget.onOpenAppointmentsTab,
             ),
             const SizedBox(height: 14),
-            for (final a in _appointments) ...[
-              AppointmentCard(appointment: a, onMoreTap: () {}),
-              const SizedBox(height: 14),
-            ],
+            if (widget.appointments.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'No upcoming appointments',
+                  style: TextStyle(fontSize: 13),
+                ),
+              )
+            else
+              for (final a in widget.appointments) ...[
+                AppointmentCard(
+                  appointment: a,
+                  onMoreTap: () => _openAppointment(a),
+                ),
+                const SizedBox(height: 14),
+              ],
             const SizedBox(height: 10),
             const SectionHeader(title: 'Quick actions'),
             const SizedBox(height: 14),
@@ -146,7 +144,7 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
                   child: QuickActionButton(
                     icon: Icons.calendar_today_outlined,
                     label: 'Availability',
-                    onTap: () {}, // TODO
+                    onTap: widget.onOpenAppointmentsTab ?? () {},
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -154,23 +152,13 @@ class _DoctorDashboardViewState extends State<DoctorDashboardView> {
                   child: QuickActionButton(
                     icon: Icons.people_outline,
                     label: 'My patients',
-                    onTap: () {}, // TODO
+                    onTap: widget.onOpenPatientsTab ?? () {},
                   ),
                 ),
               ],
             ),
           ],
         ),
-      ),
-      bottomNavigationBar: DoctorBottomNav(
-        currentIndex: _currentIndex,
-        onTap: (i) {
-          if (i == 4) {
-            _confirmSignOut();
-          } else {
-            setState(() => _currentIndex = i);
-          }
-        },
       ),
     );
   }

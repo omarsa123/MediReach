@@ -30,9 +30,23 @@ const PORT = Number(process.env.PORT) || 3000;
 
 // ---------- Global middleware ----------
 app.use(helmet());
+const allowedOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: true,
+    origin: (origin, callback) => {
+      // Allow native mobile clients / server-to-server requests with no Origin header
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.length === 0) {
+        if (process.env.NODE_ENV !== "production") return callback(null, true);
+        return callback(new Error("CORS origin not allowed"));
+      }
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("CORS origin not allowed"));
+    },
     credentials: true,
   }),
 );

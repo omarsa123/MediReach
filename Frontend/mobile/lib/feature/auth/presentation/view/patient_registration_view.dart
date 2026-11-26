@@ -14,7 +14,16 @@ import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 
 class PatientRegistrationView extends StatefulWidget {
-  const PatientRegistrationView({super.key});
+  final String? registrationToken;
+  final String? googleEmail;
+  final String? googleName;
+
+  const PatientRegistrationView({
+    super.key,
+    this.registrationToken,
+    this.googleEmail,
+    this.googleName,
+  });
 
   @override
   State<PatientRegistrationView> createState() =>
@@ -30,8 +39,16 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
   final _confirmPasswordController = TextEditingController();
 
   String _countryCode = '+20';
+  bool get _isGoogleRegistration => widget.registrationToken != null;
   File? _profileImage;
   final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _fullNameController.text = widget.googleName ?? '';
+    _emailController.text = widget.googleEmail ?? '';
+  }
 
   @override
   void dispose() {
@@ -80,13 +97,23 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
 
       if (!mounted) return; // حماية الـ Context بعد الـ await
 
-      context.read<AuthCubit>().registerPatient(
-        name: _fullNameController.text.trim(),
-        email: _emailController.text.trim(),
-        phone: fullPhone,
-        password: _passwordController.text,
-        profileImageBase64: base64Image,
-      );
+      if (_isGoogleRegistration) {
+        context.read<AuthCubit>().registerWithGoogle({
+          'registrationToken': widget.registrationToken,
+          'role': 'patient',
+          'name': _fullNameController.text.trim(),
+          'phone': fullPhone,
+          if (base64Image != null) 'profileImageBase64': base64Image,
+        });
+      } else {
+        context.read<AuthCubit>().registerPatient(
+          name: _fullNameController.text.trim(),
+          email: _emailController.text.trim(),
+          phone: fullPhone,
+          password: _passwordController.text,
+          profileImageBase64: base64Image,
+        );
+      }
     }
   }
 
@@ -100,6 +127,8 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
             '/email_verification',
             arguments: state.email,
           );
+        } else if (state is AuthGoogleRegistrationSuccess) {
+          Navigator.pushNamedAndRemoveUntil(context, '/patient_home', (route) => false);
         } else if (state is AuthAuthenticated) {
           Navigator.pushReplacementNamed(context, '/patient_login');
         } else if (state is AuthError) {
@@ -232,6 +261,7 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
                       keyboardType: TextInputType.emailAddress,
                       prefixIcon: Icons.mail_outline_rounded,
                       validator: Validators.email,
+                      readOnly: _isGoogleRegistration,
                     ),
                     const SizedBox(height: 14),
                     AuthTextField(
@@ -300,27 +330,26 @@ class _PatientRegistrationViewState extends State<PatientRegistrationView> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    AuthTextField(
-                      label: 'Password',
-                      hintText: 'Enter your password',
-                      controller: _passwordController,
-                      isPassword: true,
-                      prefixIcon: Icons.lock_outline_rounded,
-                      validator: Validators.password,
-                    ),
-                    const SizedBox(height: 14),
-                    AuthTextField(
-                      label: 'Confirm password',
-                      hintText: 'Confirm your password',
-                      controller: _confirmPasswordController,
-                      isPassword: true,
-                      prefixIcon: Icons.lock_outline_rounded,
-                      validator: (v) => Validators.confirmPassword(
-                        v,
-                        _passwordController.text,
+                    if (!_isGoogleRegistration) ...[
+                      const SizedBox(height: 14),
+                      AuthTextField(
+                        label: 'Password',
+                        hintText: 'Enter your password',
+                        controller: _passwordController,
+                        isPassword: true,
+                        prefixIcon: Icons.lock_outline_rounded,
+                        validator: Validators.password,
                       ),
-                    ),
+                      const SizedBox(height: 14),
+                      AuthTextField(
+                        label: 'Confirm password',
+                        hintText: 'Confirm your password',
+                        controller: _confirmPasswordController,
+                        isPassword: true,
+                        prefixIcon: Icons.lock_outline_rounded,
+                        validator: (v) => Validators.confirmPassword(v, _passwordController.text),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 2),

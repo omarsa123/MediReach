@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../../feature/auth/data/models/user_model.dart';
+
+import '../../../../feature/auth/data/models/auth_response_model.dart';
 import '../../../../core/network/api_exceptions.dart';
 import '../../../../feature/auth/data/auth_repository.dart';
 import 'auth_state.dart';
@@ -244,7 +245,7 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
-  Future<UserModel?> completeGoogleLogin({
+  Future<AuthResponseModel?> completeGoogleLogin({
     String? accessToken,
     String? refreshToken,
     String? code,
@@ -252,30 +253,56 @@ class AuthCubit extends Cubit<AuthState> {
     bool rememberMe = false,
   }) async {
     emit(const AuthLoading(message: 'Completing Google sign-in...'));
-
     try {
-      final user = await _repo.completeGoogleLogin(
+      final response = await _repo.completeGoogleLogin(
         accessToken: accessToken,
         refreshToken: refreshToken,
         code: code,
         expectedRole: expectedRole,
         rememberMe: rememberMe,
       );
-
+      if (response.requiresRegistration) {
+        emit(
+          AuthGoogleRegistrationRequired(
+            registrationToken: response.registrationToken ?? '',
+            email: response.googleEmail ?? '',
+            name: response.googleName ?? '',
+          ),
+        );
+        return response;
+      }
+      final user = response.user!;
       emit(AuthAuthenticated(user, message: 'Welcome, ${user.name}!'));
-
-      return user;
+      return response;
     } on RoleMismatchException catch (e) {
       emit(AuthError(e.message, code: 'ROLE_MISMATCH'));
     } on NetworkException catch (e) {
       emit(AuthError(e.message, code: 'NETWORK_ERROR'));
     } on ApiException catch (e) {
       emit(AuthError(e.message, code: e.code));
-    } catch (e) {
+    } catch (_) {
       emit(const AuthError('Google sign-in failed. Please try again.'));
     }
-
     return null;
+  }
+
+  Future<void> registerWithGoogle(Map<String, dynamic> payload) async {
+    emit(const AuthLoading(message: 'Completing your registration...'));
+    try {
+      final user = await _repo.registerWithGoogle(payload);
+      final isProvider =
+          user.role.toLowerCase() == 'provider' ||
+          user.role.toLowerCase() == 'doctor';
+      emit(
+        AuthGoogleRegistrationSuccess(user: user, requiresApproval: isProvider),
+      );
+    } on NetworkException catch (e) {
+      emit(AuthError(e.message, code: 'NETWORK_ERROR'));
+    } on ApiException catch (e) {
+      emit(AuthError(e.message, code: e.code));
+    } catch (_) {
+      emit(const AuthError('Google registration failed. Please try again.'));
+    }
   }
 
   Future<void> logout() async {

@@ -17,7 +17,7 @@ export async function loginWithRole({ email, password, expectedRole }) {
 }
 export async function sendPasswordResetEmail(email) { return api.post('/auth/forgot-password', { email }, { auth: false }); }
 export async function updateUserPassword(email, otp, newPassword) { return api.post('/auth/reset-password', { email, otp, newPassword }, { auth: false }); }
-export async function updateEmail(oldEmail, newEmail) { throw new Error('Email change verification is not currently supported by the backend API.'); }
+export async function updateEmail() { throw new Error('Email change verification is not currently supported by the backend API.'); }
 export async function resendOtp(email) { return api.post('/auth/resend-verification', { email }, { auth: false }); }
 export function clearSession() {
   ['medreach_token', 'medreach_refresh_token', 'medreach_user'].forEach((key) => localStorage.removeItem(key));

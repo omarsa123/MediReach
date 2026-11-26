@@ -21,7 +21,12 @@ export default function Verifications({ onChanged }) {
   };
 
   useEffect(() => {
-    loadData();
+    let active = true;
+    getPendingOrganizations()
+      .then((data) => { if (active) { setPendingOrgs(data || []); setError(''); } })
+      .catch((err) => { if (active) setError(err.message || 'Failed to load verification requests.'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
 
   const handleVerify = async (userId, status) => {

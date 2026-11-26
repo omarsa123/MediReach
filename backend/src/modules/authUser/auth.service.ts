@@ -7,6 +7,7 @@ import {
   toPublicUser,
 } from "../../utils/response.utils.js";
 import { EmailService } from "../../services/email.service.js";
+import { StorageService } from "../../services/storage.service.js";
 import { OtpService } from "./otp.service.js";
 import { pool } from "../../config/dbconfig.js";
 import { supabaseAdmin } from "../../config/subabase.js";
@@ -129,8 +130,8 @@ export class AuthService {
     if (role === "provider" && !body.licenseNumber) {
       throw { status: 400, message: "licenseNumber is required for provider registration", code: "LICENSE_REQUIRED" };
     }
-    if (role === "organization" && !body.licenseDocumentUrl) {
-      throw { status: 400, message: "licenseDocumentUrl is required for organization registration", code: "LICENSE_DOCUMENT_REQUIRED" };
+    if (role === "organization" && !body.licenseDocumentUrl && !body.licenseDocumentBase64) {
+      throw { status: 400, message: "licenseDocumentUrl or licenseDocumentBase64 is required for organization registration", code: "LICENSE_DOCUMENT_REQUIRED" };
     }
     if (role === "provider" && body.providerType && !["Doctor", "Nurse", "Physiotherapist", "LabSpecialist"].includes(body.providerType)) {
       throw { status: 400, message: "providerType must be Doctor, Nurse, Physiotherapist, or LabSpecialist", code: "INVALID_PROVIDER_TYPE" };
@@ -232,11 +233,18 @@ export class AuthService {
       };
     }
     let profilePictureUrl: string | null = null;
+    let licenseDocumentUrl: string | null = body.licenseDocumentUrl || null;
     try {
       profilePictureUrl = await uploadProfileImage(
         body.profileImageBase64,
         userId,
       );
+      if (role === "organization" && !licenseDocumentUrl && body.licenseDocumentBase64) {
+        licenseDocumentUrl = await StorageService.uploadOrganizationLicense(
+          body.licenseDocumentBase64,
+          userId,
+        );
+      }
     } catch (imageError) {
       await supabaseAdmin.auth.admin.deleteUser(userId);
       throw imageError;
@@ -247,7 +255,7 @@ export class AuthService {
     try {
       publicUser = await UserModel.createFromAuth(
         userId,
-        { ...body, role, username, profilePictureUrl },
+        { ...body, role, username, profilePictureUrl, licenseDocumentUrl },
         passwordHash,
       );
     } catch (dbError) {

@@ -129,3 +129,19 @@ class AuthResetOtpVerified extends AuthState {
   @override
   List<Object?> get props => [email];
 }
+class AuthGoogleRegistrationSuccess extends AuthState {
+  final UserModel user;
+  final bool requiresApproval;
+  const AuthGoogleRegistrationSuccess({required this.user, this.requiresApproval = false});
+  @override
+  List<Object?> get props => [user, requiresApproval];
+}
+
+class AuthGoogleRegistrationRequired extends AuthState {
+  final String registrationToken;
+  final String email;
+  final String name;
+  const AuthGoogleRegistrationRequired({required this.registrationToken, required this.email, required this.name});
+  @override
+  List<Object?> get props => [registrationToken, email, name];
+}

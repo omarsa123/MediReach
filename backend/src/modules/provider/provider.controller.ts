@@ -2,6 +2,8 @@ import type { Request, Response } from "express";
 import { ProviderModel } from "./provider.model.js";
 import { catchAsync } from "../../utils/catchAsync.js";
 import { errorResponse, successResponse } from "../../utils/response.utils.js";
+import { RateModel } from "../rate/rate.model.js";
+import { MedicalModel } from "../medical/medical.model.js";
 
 const ALLOWED_APPOINTMENT_STATUSES = new Set([
   "Confirmed",
@@ -148,9 +150,7 @@ export class ProviderController {
         req.body,
       );
       if (!updated) {
-        res
-          .status(404)
-          .json(errorResponse("Schedule not found", "NOT_FOUND"));
+        res.status(404).json(errorResponse("Schedule not found", "NOT_FOUND"));
         return;
       }
 
@@ -183,9 +183,7 @@ export class ProviderController {
         scheduleId,
       );
       if (!deleted) {
-        res
-          .status(404)
-          .json(errorResponse("Schedule not found", "NOT_FOUND"));
+        res.status(404).json(errorResponse("Schedule not found", "NOT_FOUND"));
         return;
       }
 
@@ -260,6 +258,145 @@ export class ProviderController {
           { appointment: updated },
           "Appointment status updated successfully",
         ),
+      );
+    },
+  );
+
+  // ==========================================================================
+  // الملفات الطبية، الروشتات، والملاحظات (Medical & Prescriptions)
+  // ==========================================================================
+  static createPrescription = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const { appointmentId, patientId, description } = req.body;
+
+      if (!appointmentId || !patientId || !description) {
+        res
+          .status(400)
+          .json(
+            errorResponse(
+              "appointmentId, patientId, and description are required",
+              "MISSING_FIELDS",
+            ),
+          );
+        return;
+      }
+
+      // استدعاء الموديل الطبي
+      const prescription = await MedicalModel.createPrescription({
+        appointmentId: Number(appointmentId),
+        patientId,
+        providerId: user.userId,
+        description,
+      });
+
+      res
+        .status(201)
+        .json(
+          successResponse(
+            { prescription },
+            "Prescription created successfully",
+          ),
+        );
+    },
+  );
+
+  static listProviderPrescriptions = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const prescriptions = await MedicalModel.listPrescriptionsByProvider(
+        user.userId,
+      );
+      res.json(successResponse({ prescriptions }));
+    },
+  );
+
+  static upsertMedicalNote = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const { appointmentId, patientId, content } = req.body;
+
+      if (!appointmentId || !patientId || !content) {
+        res
+          .status(400)
+          .json(
+            errorResponse(
+              "appointmentId, patientId, and content are required",
+              "MISSING_FIELDS",
+            ),
+          );
+        return;
+      }
+
+      const note = await MedicalModel.upsertNote({
+        appointmentId: Number(appointmentId),
+        patientId,
+        providerId: user.userId,
+        content,
+      });
+
+      res.json(successResponse({ note }, "Medical note saved successfully"));
+    },
+  );
+
+  static listProviderMedicalNotes = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const notes = await MedicalModel.listNotesByProvider(user.userId);
+      res.json(successResponse({ notes }));
+    },
+  );
+
+  // ==========================================================================
+  // إدارة غرفة الكشف الأونلاين (OnlineRoom)
+  // ==========================================================================
+  static getOnlineRoom = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const room = await MedicalModel.getOnlineRoom(user.userId);
+      res.json(successResponse({ room }));
+    },
+  );
+
+  static upsertOnlineRoom = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const { roomLink, status } = req.body;
+
+      if (!roomLink) {
+        res
+          .status(400)
+          .json(errorResponse("roomLink is required", "MISSING_ROOM_LINK"));
+        return;
+      }
+
+      const room = await MedicalModel.upsertOnlineRoom({
+        providerId: user.userId,
+        roomLink,
+        status,
+      });
+
+      res.json(successResponse({ room }, "Online room updated successfully"));
+    },
+  );
+
+  // ==========================================================================
+  // تقييمات الدكتور (Provider Ratings & Reviews)
+  // ==========================================================================
+  static getProviderReviews = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const [reviews, stats] = await Promise.all([
+        RateModel.listByProvider(user.userId),
+        RateModel.averageForProvider(user.userId),
+      ]);
+
+      res.json(
+        successResponse({
+          averageRating: Number(stats?.averageRating || 0),
+          totalRatings: Number(stats?.totalRatings || 0),
+          reviews,
+        }),
       );
     },
   );

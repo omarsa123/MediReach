@@ -1,41 +1,46 @@
 import { Router } from "express";
 import { AuthController } from "./auth.controller.js";
+import { UserController } from "../user/user.controller.js";
 import {
   requireAuth,
   authorizeRoles,
 } from "../../middleware/auth.middleware.js";
+import { authLimiter, otpLimiter } from "../../middleware/rateLimit.js";
 
 const authRouter = Router();
 
 // 1. الأساسيات
-authRouter.post("/register", AuthController.register);
-authRouter.post("/login", AuthController.login);
-authRouter.post("/refresh", AuthController.refreshToken);
+authRouter.post("/register", authLimiter, AuthController.register);
+authRouter.post("/login", authLimiter, AuthController.login);
 authRouter.post("/refresh-token", AuthController.refreshToken);
+authRouter.get("/me", requireAuth, UserController.me);
+authRouter.patch("/me", requireAuth, UserController.updateMe);
 
-// 2. إدارة كلمات المرور والـ OTP (يدعم الـ Formats الشائعة لضمان التوافق مع الفرونت)
-authRouter.post("/forgot-password", AuthController.forgotPassword);
-authRouter.post("/forget-password", AuthController.forgotPassword);
-authRouter.post("/verify-reset-otp", AuthController.verifyResetPasswordOtp);
+// 2. إدارة كلمات المرور والـ OTP
+authRouter.post("/forgot-password", otpLimiter, AuthController.forgotPassword);
 authRouter.post(
-  "/verify-reset-password-otp",
+  "/verify-reset-otp",
+  otpLimiter,
   AuthController.verifyResetPasswordOtp,
 );
-authRouter.post("/reset-password", AuthController.resetPasswordWithOtp);
-authRouter.post("/reset-password-otp", AuthController.resetPasswordWithOtp);
+authRouter.post(
+  "/reset-password",
+  otpLimiter,
+  AuthController.resetPasswordWithOtp,
+);
 
 // 3. تأكيد البريد الإلكتروني والـ OTP
-authRouter.post("/verify-email", AuthController.verifyEmailOtp);
-authRouter.get("/verify-email", AuthController.verifyEmailOtp);
-authRouter.post("/verify-email-otp", AuthController.verifyEmailOtp);
-authRouter.post("/resend-verification", AuthController.resendVerification);
+authRouter.post("/verify-email", otpLimiter, AuthController.verifyEmailOtp);
+authRouter.post(
+  "/resend-verification",
+  otpLimiter,
+  AuthController.resendVerification,
+);
 
 // 4. مصادقة جوجل (Google OAuth)
-authRouter.get("/google-url", AuthController.getGoogleAuthUrl);
 authRouter.get("/google/url", AuthController.getGoogleAuthUrl);
 authRouter.post("/google/exchange", AuthController.exchangeGoogleCode);
 authRouter.post("/google/callback", AuthController.googleCallback);
-authRouter.get("/google/callback", AuthController.googleCallback);
 
 // 5. الصيانة والحذف (Admin)
 authRouter.post(

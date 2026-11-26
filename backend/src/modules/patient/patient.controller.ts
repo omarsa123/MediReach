@@ -1,10 +1,13 @@
 import type { Request, Response } from "express";
 import { PatientModel } from "./patient.model.js";
+import { MedicalModel } from "../medical/medical.model.js";
+import { RateModel } from "../rate/rate.model.js";
+import { NotificationModel } from "../notification/notification.model.js";
+import { StorageService } from "../../services/storage.service.js";
 import { catchAsync } from "../../utils/catchAsync.js";
 import { errorResponse, successResponse } from "../../utils/response.utils.js";
 
 export class PatientController {
-  // جلب بروفايل المريض
   static getProfile = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
@@ -27,7 +30,6 @@ export class PatientController {
     },
   );
 
-  // تحديث بروفايل المريض
   static updateProfile = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
@@ -58,7 +60,6 @@ export class PatientController {
     },
   );
 
-  // البحث والفلترة عن مقدمي الخدمة والخدمات
   static searchProviders = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const minPriceRaw = req.query.minPrice;
@@ -68,7 +69,6 @@ export class PatientController {
       const maxPrice =
         maxPriceRaw !== undefined ? Number(maxPriceRaw) : undefined;
 
-      // دعم المسميات البديلة من وثيقة الـ API (type -> providerType, specialty -> specialization)
       const providerType =
         (req.query.providerType as string | undefined) ||
         (req.query.type as string | undefined);
@@ -107,7 +107,6 @@ export class PatientController {
     },
   );
 
-  // تفاصيل مقدم خدمة + خدماته + مواعيده
   static getProviderDetails = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const providerId = String(req.params.providerId || "").trim();
@@ -124,11 +123,45 @@ export class PatientController {
         return;
       }
 
-      res.json(successResponse({ provider }));
+      const ratingStats = await RateModel.averageForProvider(providerId);
+
+      res.json(
+        successResponse({
+          provider: {
+            ...provider,
+            rating: Number(ratingStats?.averageRating || 0),
+            reviewCount: Number(ratingStats?.totalRatings || 0),
+          },
+        }),
+      );
     },
   );
 
-  // جلب المواعيد المتاحة لمزود معين وخدمة محددة في تاريخ معين
+  static getProviderReviews = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const providerId = String(req.params.providerId || "").trim();
+      if (!providerId) {
+        res
+          .status(400)
+          .json(errorResponse("providerId is required", "MISSING_PROVIDER_ID"));
+        return;
+      }
+
+      const [reviews, stats] = await Promise.all([
+        RateModel.listByProvider(providerId),
+        RateModel.averageForProvider(providerId),
+      ]);
+
+      res.json(
+        successResponse({
+          averageRating: Number(stats?.averageRating || 0),
+          totalRatings: Number(stats?.totalRatings || 0),
+          reviews,
+        }),
+      );
+    },
+  );
+
   static getProviderAvailability = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const providerId = String(req.params.providerId || "").trim();
@@ -158,7 +191,6 @@ export class PatientController {
     },
   );
 
-  // حجز موعد جديد
   static createAppointment = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
@@ -187,7 +219,7 @@ export class PatientController {
           .status(400)
           .json(
             errorResponse(
-              "providerServiceId, appointmentDate, and startTime are required (endTime is calculated by the server)",
+              "providerServiceId, appointmentDate, and startTime are required",
               "MISSING_FIELDS",
             ),
           );
@@ -210,7 +242,6 @@ export class PatientController {
     },
   );
 
-  // عرض حجوزات المريض
   static listAppointments = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
@@ -243,7 +274,6 @@ export class PatientController {
     },
   );
 
-  // جلب تفاصيل حجز محدد
   static getAppointmentDetails = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
@@ -271,7 +301,6 @@ export class PatientController {
     },
   );
 
-  // إلغاء حجز
   static cancelAppointment = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
@@ -308,12 +337,196 @@ export class PatientController {
       );
     },
   );
-}
 
-/* ============================================================================
- * TODO [Patient Controller Remaining Endpoints]:
- * - GET /providers/:providerId/reviews : يتطلب إنشاء جدول Review في قاعدة البيانات أولاً.
- * - ملاحظة حول POST /appointments:
- *   الباك إند حالياً يعتمد على "providerServiceId" لتحديد المزود والخدمة والمؤسسة ونوع التقديم بدقة.
- *   الوثيقة تقترح إرسال (providerId + serviceId)، لذا يجب تنسيق هذا مع الفرونت إند أو تمرير providerServiceId.
- * ============================================================================ */
+  // التقييم مع التحقق الآمن والصارم من الـ appointmentId
+  static rateAppointment = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const appointmentId = Number(req.params.appointmentId);
+      const { ratingValue, rating, comment } = req.body;
+      const resolvedRating = Number(ratingValue ?? rating);
+
+      if (
+        !Number.isInteger(appointmentId) ||
+        appointmentId <= 0 ||
+        Number.isNaN(resolvedRating)
+      ) {
+        res
+          .status(400)
+          .json(
+            errorResponse(
+              "Valid positive appointmentId and ratingValue (1-5) are required",
+              "MISSING_OR_INVALID_FIELDS",
+            ),
+          );
+        return;
+      }
+
+      const createdRate = await RateModel.create({
+        appointmentId,
+        patientId: user.userId,
+        ratingValue: resolvedRating,
+        comment: comment ?? null,
+      });
+
+      res
+        .status(201)
+        .json(
+          successResponse(
+            { rate: createdRate },
+            "Appointment rated successfully",
+          ),
+        );
+    },
+  );
+
+  static listMedicalDocuments = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const documents = await MedicalModel.listDocuments(user.userId);
+      res.json(successResponse({ documents }));
+    },
+  );
+
+  static uploadMedicalDocument = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const { fileName, fileType, fileUrl, fileBase64, description } = req.body;
+
+      if (!fileName || (!fileUrl && !fileBase64)) {
+        res
+          .status(400)
+          .json(
+            errorResponse(
+              "fileName and either fileUrl or fileBase64 are required",
+              "MISSING_FIELDS",
+            ),
+          );
+        return;
+      }
+
+      let resolvedUrl = fileUrl;
+      if (!resolvedUrl && fileBase64) {
+        if (
+          typeof (StorageService as any).uploadMedicalDocument === "function"
+        ) {
+          resolvedUrl = await (StorageService as any).uploadMedicalDocument(
+            fileBase64,
+            user.userId,
+            fileName,
+          );
+        } else {
+          res
+            .status(400)
+            .json(
+              errorResponse(
+                "Direct base64 upload helper not configured; provide fileUrl",
+                "UPLOAD_NOT_CONFIGURED",
+              ),
+            );
+          return;
+        }
+      }
+
+      const document = await MedicalModel.createDocument({
+        patientId: user.userId,
+        fileName: String(fileName).trim(),
+        fileType,
+        fileUrl: resolvedUrl,
+        description: description ?? null,
+      });
+
+      res
+        .status(201)
+        .json(
+          successResponse(
+            { document },
+            "Medical document uploaded successfully",
+          ),
+        );
+    },
+  );
+
+  static deleteMedicalDocument = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const documentId = String(req.params.documentId || "").trim();
+      const deleted = await MedicalModel.deleteDocument(
+        documentId,
+        user.userId,
+      );
+
+      if (!deleted) {
+        res.status(404).json(errorResponse("Document not found", "NOT_FOUND"));
+        return;
+      }
+
+      res.json(
+        successResponse({ document: deleted }, "Medical document deleted"),
+      );
+    },
+  );
+
+  static listPrescriptions = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const prescriptions = await MedicalModel.listPrescriptionsByPatient(
+        user.userId,
+      );
+      res.json(successResponse({ prescriptions }));
+    },
+  );
+
+  static listMedicalNotes = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const notes = await MedicalModel.listNotesByPatient(user.userId);
+      res.json(successResponse({ notes }));
+    },
+  );
+
+  static listNotifications = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const onlyUnread = req.query.unread === "true";
+      const [notifications, unreadCount] = await Promise.all([
+        NotificationModel.listByUser(user.userId, onlyUnread),
+        NotificationModel.unreadCount(user.userId),
+      ]);
+      res.json(successResponse({ unreadCount, notifications }));
+    },
+  );
+
+  static markNotificationRead = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const notificationId = String(req.params.notificationId || "").trim();
+      const updated = await NotificationModel.markAsRead(
+        notificationId,
+        user.userId,
+      );
+
+      if (!updated) {
+        res
+          .status(404)
+          .json(errorResponse("Notification not found", "NOT_FOUND"));
+        return;
+      }
+
+      res.json(successResponse({ notification: updated }));
+    },
+  );
+
+  static markAllNotificationsRead = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const count = await NotificationModel.markAllAsRead(user.userId);
+      res.json(
+        successResponse(
+          { markedCount: count },
+          "All notifications marked as read",
+        ),
+      );
+    },
+  );
+}

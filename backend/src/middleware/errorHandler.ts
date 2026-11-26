@@ -8,12 +8,20 @@ export const globalErrorHandler = (
 ) => {
   console.error("[GlobalError]", err);
 
-  const statusCode = err.statusCode || 500;
-  const message = err.message || "Internal server error";
-  const code = err.code || "INTERNAL";
+  const rawStatus = Number(err?.statusCode ?? err?.status);
+  const statusCode =
+    Number.isInteger(rawStatus) && rawStatus >= 400 && rawStatus < 600
+      ? rawStatus
+      : 500;
+  const isServerError = statusCode >= 500;
+  const message = isServerError
+    ? "Internal server error"
+    : err?.message || "Request failed";
+  const code = err?.code || (isServerError ? "INTERNAL" : "BAD_REQUEST");
 
   res.status(statusCode).json({
     success: false,
+    message,
     error: message,
     code,
   });

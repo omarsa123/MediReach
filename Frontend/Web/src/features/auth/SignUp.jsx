@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Building2, User, Mail, Phone, Lock, 
@@ -68,7 +68,7 @@ export default function SignUp() {
         } else {
           setAddressSuggestions([]);
         }
-      } catch (error) {
+      } catch {
         setAddressSuggestions([]);
       } finally {
         setIsSearchingAddress(false);

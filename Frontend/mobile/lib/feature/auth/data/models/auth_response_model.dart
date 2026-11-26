@@ -1,65 +1,67 @@
+import 'package:equatable/equatable.dart';
 import '../../../../feature/auth/data/models/auth_session_model.dart';
-
 import 'user_model.dart';
 
-class AuthResponseModel {
+class AuthResponseModel extends Equatable {
   final bool success;
   final String message;
   final UserModel? user;
   final AuthSessionModel? session;
+  final bool requiresRegistration;
+  final bool requiresApproval;
+  final String? registrationToken;
+  final String? googleEmail;
+  final String? googleName;
 
   const AuthResponseModel({
     required this.success,
     required this.message,
     this.user,
     this.session,
+    this.requiresRegistration = false,
+    this.requiresApproval = false,
+    this.registrationToken,
+    this.googleEmail,
+    this.googleName,
   });
 
   factory AuthResponseModel.fromJson(Map<String, dynamic> json) {
-    UserModel? user;
-    AuthSessionModel? session;
-
-    final data = json['data'];
-
-    if (data is Map) {
-      final dataMap = Map<String, dynamic>.from(data);
-
-      final userData = dataMap['user'] ?? json['user'];
-
-      if (userData is Map) {
-        user = UserModel.fromJson(Map<String, dynamic>.from(userData));
-      } else if (dataMap['userId'] != null || dataMap['id'] != null) {
-        user = UserModel.fromJson(dataMap);
-      }
-
-      final sessionData = dataMap['session'] ?? json['session'];
-
-      if (sessionData is Map) {
-        session = AuthSessionModel.fromJson(
-          Map<String, dynamic>.from(sessionData),
-        );
-      }
-    } else {
-      final userData = json['user'];
-
-      if (userData is Map) {
-        user = UserModel.fromJson(Map<String, dynamic>.from(userData));
-      }
-
-      final sessionData = json['session'];
-
-      if (sessionData is Map) {
-        session = AuthSessionModel.fromJson(
-          Map<String, dynamic>.from(sessionData),
-        );
-      }
-    }
+    final data = json['data'] is Map
+        ? Map<String, dynamic>.from(json['data'] as Map)
+        : json;
+    final userData = data['user'] ?? json['user'];
+    final sessionData = data['session'] ?? json['session'];
+    final googleUser = data['googleUser'] is Map
+        ? Map<String, dynamic>.from(data['googleUser'] as Map)
+        : <String, dynamic>{};
 
     return AuthResponseModel(
       success: json['success'] == true,
       message: (json['message'] ?? 'Success').toString(),
-      user: user,
-      session: session,
+      user: userData is Map
+          ? UserModel.fromJson(Map<String, dynamic>.from(userData))
+          : null,
+      session: sessionData is Map
+          ? AuthSessionModel.fromJson(Map<String, dynamic>.from(sessionData))
+          : null,
+      requiresRegistration: data['requiresRegistration'] == true,
+      requiresApproval: data['requiresApproval'] == true,
+      registrationToken: data['registrationToken']?.toString(),
+      googleEmail: googleUser['email']?.toString(),
+      googleName: googleUser['name']?.toString(),
     );
   }
+
+  @override
+  List<Object?> get props => [
+    success,
+    message,
+    user,
+    session,
+    requiresRegistration,
+    requiresApproval,
+    registrationToken,
+    googleEmail,
+    googleName,
+  ];
 }

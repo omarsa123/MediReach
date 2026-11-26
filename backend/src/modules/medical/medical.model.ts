@@ -11,8 +11,8 @@ export class MedicalModel {
          pa."providerId",
          pa."organizerId"
        FROM public."Appointment" a
-       JOIN public."ProviderService" ps ON ps."providerServiceId" = a."providerServiceId"
-       JOIN public."ProviderAssignment" pa ON pa."assignmentId" = ps."assignmentId"
+       JOIN public."ProviderService" ps ps."providerServiceId" = a."providerServiceId"
+       JOIN public."ProviderAssignment" pa pa."assignmentId" = ps."assignmentId"
        WHERE a."appointmentId" = $1`,
       [appointmentId],
     );
@@ -43,6 +43,43 @@ export class MedicalModel {
       params,
     );
     return result.rows[0] || null;
+  }
+
+  static async canAccessDocument(
+    userId: string,
+    role: string,
+    patientId: string,
+  ): Promise<boolean> {
+    if (role === "admin") return true;
+    if (role === "patient" && userId === patientId) return true;
+
+    if (role === "provider") {
+      const res = await pool.query(
+        `SELECT 1
+         FROM public."Appointment" a
+         JOIN public."ProviderService" ps ON ps."providerServiceId" = a."providerServiceId"
+         JOIN public."ProviderAssignment" pa ON pa."assignmentId" = ps."assignmentId"
+         WHERE a."patientId" = $1 AND pa."providerId" = $2
+         LIMIT 1`,
+        [patientId, userId],
+      );
+      return res.rows.length > 0;
+    }
+
+    if (role === "organization") {
+      const res = await pool.query(
+        `SELECT 1
+         FROM public."Appointment" a
+         JOIN public."ProviderService" ps ON ps."providerServiceId" = a."providerServiceId"
+         JOIN public."ProviderAssignment" pa ON pa."assignmentId" = ps."assignmentId"
+         WHERE a."patientId" = $1 AND pa."organizerId" = $2
+         LIMIT 1`,
+        [patientId, userId],
+      );
+      return res.rows.length > 0;
+    }
+
+    return false;
   }
 
   static async createDocument(data: {
@@ -81,14 +118,41 @@ export class MedicalModel {
   static async updateDocument(
     documentId: number | string,
     patientId: string,
-    data: { fileName?: string; description?: string | null; fileUrl?: string },
+    data: {
+      fileName?: string;
+      fileType?: string;
+      description?: string | null;
+      fileUrl?: string;
+    },
   ) {
     const fields: string[] = [];
     const values: unknown[] = [];
     let idx = 1;
+
     if (data.fileName !== undefined) {
       fields.push(`"fileName" = $${idx++}`);
       values.push(data.fileName);
+    }
+    if (data.fileType !== undefined) {
+      const allowedTypes = [
+        "PDF",
+        "JPG",
+        "JPEG",
+        "PNG",
+        "DOC",
+        "DOCX",
+        "Other",
+      ];
+      const fileType = data.fileType || "Other";
+      if (!allowedTypes.includes(fileType)) {
+        throw {
+          status: 400,
+          message: `fileType must be one of: ${allowedTypes.join(", ")}`,
+          code: "INVALID_FILE_TYPE",
+        };
+      }
+      fields.push(`"fileType" = $${idx++}`);
+      values.push(fileType);
     }
     if (data.description !== undefined) {
       fields.push(`"description" = $${idx++}`);
@@ -278,12 +342,7 @@ export class MedicalModel {
        ON CONFLICT ("appointmentId") DO UPDATE
          SET "description" = EXCLUDED."description"
        RETURNING *`,
-      [
-        data.appointmentId,
-        data.patientId,
-        data.providerId,
-        data.description,
-      ],
+      [data.appointmentId, data.patientId, data.providerId, data.description],
     );
     return result.rows[0];
   }
@@ -311,6 +370,23 @@ export class MedicalModel {
       };
     }
 
+    if (!["InProgress", "Completed"].includes(parties.status)) {
+      throw {
+        status: 409,
+        message: "Recording is allowed only for an active or completed session",
+        code: "SESSION_NOT_STARTED",
+      };
+    }
+
+    const existing = await this.getRecordingByAppointment(data.appointmentId);
+    if (existing) {
+      throw {
+        status: 409,
+        message: "A recording already exists for this appointment",
+        code: "RECORDING_EXISTS",
+      };
+    }
+
     if (
       data.durationSeconds !== undefined &&
       data.durationSeconds !== null &&
@@ -328,9 +404,6 @@ export class MedicalModel {
       `INSERT INTO public."Recording"
          ("appointmentId", "fileUrl", "durationSeconds")
        VALUES ($1, $2, $3)
-       ON CONFLICT ("appointmentId") DO UPDATE
-         SET "fileUrl" = EXCLUDED."fileUrl",
-             "durationSeconds" = EXCLUDED."durationSeconds"
        RETURNING *`,
       [data.appointmentId, data.fileUrl, data.durationSeconds ?? null],
     );
@@ -346,13 +419,6 @@ export class MedicalModel {
     return result.rows[0] || null;
   }
 
-  /**
-   * هل يحق للمستخدم رؤية رابط غرفة المزود؟
-   * - المزود نفسه
-   * - الأدمن
-   * - مريض لديه موعد نشط (Pending/Confirmed/InProgress) مع هذا المزود
-   * - مؤسسة مرتبطة بـ Assignment معتمد لهذا المزود
-   */
   static async canAccessOnlineRoom(
     userId: string,
     role: string,

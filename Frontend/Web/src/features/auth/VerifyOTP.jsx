@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import medreachLogo from './medreach.png';
 import { verifyEmailOtp, resendOtp } from '../../services/authService';
@@ -18,7 +18,7 @@ export default function VerifyOTP() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const [currentEmail, setCurrentEmail] = useState(location.state?.email || '');
+  const currentEmail = location.state?.email || '';
 
   useEffect(() => {
     if (!currentEmail) navigate('/signup');

@@ -7,7 +7,7 @@ import {
 
 const patientRouter = Router();
 
-// البروفايل
+// 1. البروفايل
 patientRouter.get(
   "/profile",
   requireAuth,
@@ -21,7 +21,7 @@ patientRouter.patch(
   PatientController.updateProfile,
 );
 
-// البحث والفلترة عن مقدمي الخدمة والخدمات والمواعيد المتاحة
+// 2. البحث والفلترة عن مقدمي الخدمة والخدمات والمواعيد المتاحة والتقييمات
 patientRouter.get(
   "/providers",
   requireAuth,
@@ -35,13 +35,19 @@ patientRouter.get(
   PatientController.getProviderDetails,
 );
 patientRouter.get(
+  "/providers/:providerId/reviews",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.getProviderReviews,
+);
+patientRouter.get(
   "/providers/:providerId/availability",
   requireAuth,
   authorizeRoles("patient"),
   PatientController.getProviderAvailability,
 );
 
-// الحجوزات
+// 3. الحجوزات والتقييم
 patientRouter.get(
   "/appointments",
   requireAuth,
@@ -66,11 +72,63 @@ patientRouter.patch(
   authorizeRoles("patient"),
   PatientController.cancelAppointment,
 );
+patientRouter.post(
+  "/appointments/:appointmentId/rate",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.rateAppointment,
+);
+
+// 4. السجل الطبي (المستندات، الروشتات، الملاحظات الطبية)
+patientRouter.get(
+  "/documents",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.listMedicalDocuments,
+);
+patientRouter.post(
+  "/documents",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.uploadMedicalDocument,
+);
+patientRouter.delete(
+  "/documents/:documentId",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.deleteMedicalDocument,
+);
+patientRouter.get(
+  "/prescriptions",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.listPrescriptions,
+);
+patientRouter.get(
+  "/medical-notes",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.listMedicalNotes,
+);
+
+// 5. الإشعارات
+patientRouter.get(
+  "/notifications",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.listNotifications,
+);
+patientRouter.patch(
+  "/notifications/read-all",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.markAllNotificationsRead,
+);
+patientRouter.patch(
+  "/notifications/:notificationId/read",
+  requireAuth,
+  authorizeRoles("patient"),
+  PatientController.markNotificationRead,
+);
 
 export { patientRouter };
-
-/* ============================================================================
- * TODO [Patient Routes Remaining]:
- * 1. GET /providers/:providerId/reviews -> إضافة الراوت بعد إنشاء جدول Review.
- * 2. GET /services -> موجود بالفعل في service.routes.ts (/api/services) ولا يحتاج تكراره هنا.
- * ============================================================================ */

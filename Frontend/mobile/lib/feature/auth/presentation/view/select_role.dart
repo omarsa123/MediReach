@@ -10,7 +10,16 @@ import '../../widgets/role_card.dart';
 enum AccountType { patient, provider }
 
 class SelectRole extends StatefulWidget {
-  const SelectRole({super.key});
+  final String? registrationToken;
+  final String? googleEmail;
+  final String? googleName;
+
+  const SelectRole({
+    super.key,
+    this.registrationToken,
+    this.googleEmail,
+    this.googleName,
+  });
 
   @override
   State<SelectRole> createState() => _SelectRoleState();
@@ -22,7 +31,9 @@ class _SelectRoleState extends State<SelectRole> {
   @override
   void initState() {
     super.initState();
-    _loadSavedRole();
+    if (widget.registrationToken == null) {
+      _loadSavedRole();
+    }
   }
 
   Future<void> _loadSavedRole() async {
@@ -43,10 +54,18 @@ class _SelectRoleState extends State<SelectRole> {
 
     if (!mounted) return;
 
+    final arguments = widget.registrationToken == null
+        ? null
+        : {
+            'registrationToken': widget.registrationToken,
+            'email': widget.googleEmail,
+            'name': widget.googleName,
+          };
+
     if (_selected == AccountType.patient) {
-      Navigator.pushReplacementNamed(context, '/patient_register');
+      Navigator.pushReplacementNamed(context, '/patient_register', arguments: arguments);
     } else {
-      Navigator.pushReplacementNamed(context, '/doctor_register');
+      Navigator.pushReplacementNamed(context, '/doctor_register', arguments: arguments);
     }
   }
 

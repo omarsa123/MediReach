@@ -7,7 +7,14 @@ import './organization.css';
 export default function OrganizationDashboard() {
   const [profile, setProfile] = useState(null); const [services, setServices] = useState([]); const [assignments, setAssignments] = useState([]); const [appointments, setAppointments] = useState([]); const [error, setError] = useState(''); const [loading, setLoading] = useState(true); const navigate = useNavigate();
   const load = async () => { setLoading(true); setError(''); try { const [p,s,a,b] = await Promise.all([api.get('/organizations/profile'), api.get('/organizations/services'), api.get('/organizations/assignments'), api.get('/organizations/appointments')]); setProfile(p?.organization ?? p); setServices(s?.services ?? s ?? []); setAssignments(a?.assignments ?? a ?? []); setAppointments(b?.appointments ?? b ?? []); } catch(e) { setError(e.message); } finally { setLoading(false); } };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    let active = true;
+    Promise.all([api.get('/organizations/profile'), api.get('/organizations/services'), api.get('/organizations/assignments'), api.get('/organizations/appointments')])
+      .then(([p,s,a,b]) => { if (active) { setProfile(p?.organization ?? p); setServices(s?.services ?? s ?? []); setAssignments(a?.assignments ?? a ?? []); setAppointments(b?.appointments ?? b ?? []); setError(''); } })
+      .catch((e) => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
   const logout = () => { clearSession(); navigate('/login', { replace: true }); };
   const orgName = profile?.organizationName || 'Organization portal';
   return <div className="org-shell"><aside className="org-sidebar"><div className="org-brand"><Building2/><div><b>MedReach</b><small>ORGANIZATION</small></div></div><div className="org-nav active"><Building2/> Dashboard</div><div className="org-sidebar-bottom"><button onClick={logout}><LogOut size={17}/> Sign out</button></div></aside><main className="org-main"><header className="org-header"><div><h1>{orgName}</h1><p>Manage your healthcare organization</p></div><button className="org-refresh" onClick={load}><RefreshCw size={16}/> Refresh</button></header>

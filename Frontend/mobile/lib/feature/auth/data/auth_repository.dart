@@ -406,7 +406,7 @@ class AuthRepository {
     return _remoteDataSource.getGoogleAuthUrl(role: _normalizeRole(role));
   }
 
-  Future<UserModel> completeGoogleLogin({
+  Future<AuthResponseModel> completeGoogleLogin({
     String? accessToken,
     String? refreshToken,
     String? code,
@@ -420,14 +420,31 @@ class AuthRepository {
       expectedRole: _normalizeRole(expectedRole),
     );
 
-    _validateAuthResponse(response, 'Google login failed');
+    if (!response.success) {
+      throw ApiException(message: response.message);
+    }
 
-    final user = response.user!;
+    if (response.requiresRegistration) {
+      await _tokenStorage.clearTokens();
+      return response;
+    }
+
+    if (response.user == null) {
+      throw ApiException(message: 'Google login response is missing user data');
+    }
 
     await UserPreferences.saveRememberMe(rememberMe);
     await _saveOptionalSession(response.session);
-    await _saveUserInfo(user);
+    await _saveUserInfo(response.user!);
+    return response;
+  }
 
+  Future<UserModel> registerWithGoogle(Map<String, dynamic> payload) async {
+    final response = await _remoteDataSource.registerWithGoogle(payload);
+    _validateAuthResponse(response, 'Google registration failed');
+    final user = response.user!;
+    await _saveOptionalSession(response.session);
+    await _saveUserInfo(user);
     return user;
   }
 

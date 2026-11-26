@@ -80,8 +80,7 @@ export class OrganizationModel {
         [userId],
       );
       if (sub.rows[0])
-        org.offersHomeSampleCollection =
-          sub.rows[0].offersHomeSampleCollection;
+        org.offersHomeSampleCollection = sub.rows[0].offersHomeSampleCollection;
     } else if (type === "PhysiotherapyCenter") {
       const sub = await pool.query(
         `SELECT "offersHomeService" FROM public."PhysiotherapyCenter" WHERE "userId" = $1`,
@@ -210,7 +209,11 @@ export class OrganizationModel {
     input: CreateOrganizerServiceInput,
   ) {
     if (input.price < 0) {
-      throw { status: 400, message: "Price must be >= 0", code: "INVALID_PRICE" };
+      throw {
+        status: 400,
+        message: "Price must be >= 0",
+        code: "INVALID_PRICE",
+      };
     }
     if (!input.durationMinutes || input.durationMinutes <= 0) {
       throw {
@@ -225,7 +228,11 @@ export class OrganizationModel {
       [input.serviceId],
     );
     if (serviceCheck.rows.length === 0) {
-      throw { status: 404, message: "Service not found", code: "SERVICE_NOT_FOUND" };
+      throw {
+        status: 404,
+        message: "Service not found",
+        code: "SERVICE_NOT_FOUND",
+      };
     }
 
     try {
@@ -267,7 +274,11 @@ export class OrganizationModel {
 
     if (input.price !== undefined) {
       if (input.price < 0) {
-        throw { status: 400, message: "Price must be >= 0", code: "INVALID_PRICE" };
+        throw {
+          status: 400,
+          message: "Price must be >= 0",
+          code: "INVALID_PRICE",
+        };
       }
       fields.push(`"price" = $${idx++}`);
       values.push(input.price);
@@ -367,7 +378,11 @@ export class OrganizationModel {
       [providerId],
     );
     if (providerCheck.rows.length === 0) {
-      throw { status: 404, message: "Provider not found", code: "PROVIDER_NOT_FOUND" };
+      throw {
+        status: 404,
+        message: "Provider not found",
+        code: "PROVIDER_NOT_FOUND",
+      };
     }
     if (providerCheck.rows[0].verificationStatus !== "Approved") {
       throw {
@@ -438,7 +453,10 @@ export class OrganizationModel {
   }
 
   // ---------- ProviderService (link provider assignment to organizer service) ----------
-  static async listProviderServices(organizerId: string, assignmentId?: number) {
+  static async listProviderServices(
+    organizerId: string,
+    assignmentId?: number,
+  ) {
     const params: unknown[] = [organizerId];
     let assignmentFilter = "";
     if (assignmentId) {
@@ -590,7 +608,10 @@ export class OrganizationModel {
     return result.rows;
   }
 
-  static async createDepartment(hospitalId: string, input: CreateDepartmentInput) {
+  static async createDepartment(
+    hospitalId: string,
+    input: CreateDepartmentInput,
+  ) {
     // Ensure it's a hospital
     const hospital = await pool.query(
       `SELECT h."userId" FROM public."Hospital" h WHERE h."userId" = $1`,
@@ -704,7 +725,10 @@ export class OrganizationModel {
     return result.rows[0];
   }
 
-  static async listDepartmentProviders(hospitalId: string, departmentId: number) {
+  static async listDepartmentProviders(
+    hospitalId: string,
+    departmentId: number,
+  ) {
     const result = await pool.query(
       `SELECT
          pd."providerDepartmentId",
@@ -737,7 +761,10 @@ export class OrganizationModel {
     return result.rows;
   }
 
-  static async createAmbulance(hospitalId: string, input: CreateAmbulanceInput) {
+  static async createAmbulance(
+    hospitalId: string,
+    input: CreateAmbulanceInput,
+  ) {
     const hospital = await pool.query(
       `SELECT h."userId", h."offersAmbulanceService"
        FROM public."Hospital" h WHERE h."userId" = $1`,
@@ -855,5 +882,73 @@ export class OrganizationModel {
     );
     return result.rows[0] || null;
   }
+  // --- إزالة طبيب من قسم في المستشفى ---
+  static async removeProviderFromDepartment(
+    hospitalId: string,
+    departmentId: number,
+    assignmentId: number,
+  ) {
+    // التأكد أن القسم يتبع لهذه المستشفى
+    const dept = await pool.query(
+      `SELECT "departmentId" FROM public."Department"
+       WHERE "departmentId" = $1 AND "hospitalId" = $2`,
+      [departmentId, hospitalId],
+    );
+    if (dept.rows.length === 0) {
+      throw {
+        status: 404,
+        message: "Department not found in this hospital",
+        code: "DEPARTMENT_NOT_FOUND",
+      };
+    }
 
+    const result = await pool.query(
+      `DELETE FROM public."ProviderDepartment"
+       WHERE "departmentId" = $1 AND "assignmentId" = $2
+       RETURNING *`,
+      [departmentId, assignmentId],
+    );
+    return result.rows[0] || null;
+  }
+
+  // --- جلب تقييمات ومراجعات المؤسسة (عبر RateModel أو الاستعلام المباشر) ---
+  static async listOrganizationReviews(organizerId: string) {
+    const result = await pool.query(
+      `SELECT
+         r."rateId",
+         r."appointmentId",
+         r."ratingValue",
+         r."comment",
+         r."createdAt",
+         a."appointmentDate",
+         pa."providerId",
+         pu."name" AS "patientName",
+         pru."name" AS "providerName"
+       FROM public."Rate" r
+       JOIN public."Appointment" a ON a."appointmentId" = r."appointmentId"
+       JOIN public."ProviderService" ps ON ps."providerServiceId" = a."providerServiceId"
+       JOIN public."ProviderAssignment" pa ON pa."assignmentId" = ps."assignmentId"
+       JOIN public."User" pu ON pu."userId" = a."patientId"
+       JOIN public."User" pru ON pru."userId" = pa."providerId"
+       WHERE pa."organizerId" = $1
+       ORDER BY r."createdAt" DESC`,
+      [organizerId],
+    );
+    return result.rows;
+  }
+
+  static async averageOrganizationRating(organizerId: string) {
+    const result = await pool.query(
+      `SELECT
+         COALESCE(AVG(r."ratingValue"), 0)::numeric(3,2) AS "averageRating",
+         COUNT(r."rateId")::int AS "totalRatings"
+       FROM public."Rate" r
+       JOIN public."Appointment" a ON a."appointmentId" = r."appointmentId"
+       JOIN public."ProviderService" ps ON ps."providerServiceId" = a."providerServiceId"
+       JOIN public."ProviderAssignment" pa ON pa."assignmentId" = ps."assignmentId"
+       WHERE pa."organizerId" = $1`,
+      [organizerId],
+    );
+    return result.rows[0];
+  }
 }

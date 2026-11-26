@@ -101,7 +101,7 @@ class _MedireachState extends State<Medireach> {
     }
 
     final authCubit = navContext.read<AuthCubit>();
-    final user = await authCubit.completeGoogleLogin(
+    final result = await authCubit.completeGoogleLogin(
       accessToken: accessToken,
       refreshToken: refreshToken,
       code: code,
@@ -113,6 +113,21 @@ class _MedireachState extends State<Medireach> {
 
     if (!mounted) return;
 
+    if (result?.requiresRegistration == true) {
+      navigator.pushNamedAndRemoveUntil(
+        '/select_role',
+        (route) => false,
+        arguments: {
+          'registrationToken': result!.registrationToken,
+          'email': result.googleEmail,
+          'name': result.googleName,
+          'isGoogleRegistration': true,
+        },
+      );
+      return;
+    }
+
+    final user = result?.user;
     if (user != null) {
       final destination = user.isDoctor ? '/doctor_dashboard' : '/patient_home';
       navigator.pushNamedAndRemoveUntil(destination, (route) => false);
@@ -193,10 +208,30 @@ class _MedireachState extends State<Medireach> {
 
           final routes = <String, WidgetBuilder>{
             '/onboarding': (_) => const OnbardingView(),
-            '/select_role': (_) => const SelectRole(),
-            '/patient_register': (_) => const PatientRegistrationView(),
-            '/doctor_register': (_) => const DoctorRegistrationView(),
-            '/provider_register': (_) => const DoctorRegistrationView(),
+            '/select_role': (context) {
+              final args = ModalRoute.of(context)?.settings.arguments;
+              final data = args is Map ? Map<String, dynamic>.from(args) : <String, dynamic>{};
+              return SelectRole(
+                registrationToken: data['registrationToken']?.toString(),
+                googleEmail: data['email']?.toString(),
+                googleName: data['name']?.toString(),
+              );
+            },
+            '/patient_register': (context) {
+              final args = ModalRoute.of(context)?.settings.arguments;
+              final data = args is Map ? Map<String, dynamic>.from(args) : <String, dynamic>{};
+              return PatientRegistrationView(registrationToken: data['registrationToken']?.toString(), googleEmail: data['email']?.toString(), googleName: data['name']?.toString());
+            },
+            '/doctor_register': (context) {
+              final args = ModalRoute.of(context)?.settings.arguments;
+              final data = args is Map ? Map<String, dynamic>.from(args) : <String, dynamic>{};
+              return DoctorRegistrationView(registrationToken: data['registrationToken']?.toString(), googleEmail: data['email']?.toString(), googleName: data['name']?.toString());
+            },
+            '/provider_register': (context) {
+              final args = ModalRoute.of(context)?.settings.arguments;
+              final data = args is Map ? Map<String, dynamic>.from(args) : <String, dynamic>{};
+              return DoctorRegistrationView(registrationToken: data['registrationToken']?.toString(), googleEmail: data['email']?.toString(), googleName: data['name']?.toString());
+            },
             '/patient_login': (_) => const PatientLoginView(),
             '/doctor_login': (_) => const DoctorLoginView(),
             '/provider_login': (_) => const DoctorLoginView(),

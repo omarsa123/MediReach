@@ -73,6 +73,13 @@ function minutesToTime(mins: number): string {
 }
 
 function getDayOfWeekName(dateStr: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    throw {
+      status: 400,
+      message: "date must strictly use YYYY-MM-DD format",
+      code: "INVALID_DATE_FORMAT",
+    };
+  }
   const names = [
     "Sunday",
     "Monday",
@@ -87,7 +94,6 @@ function getDayOfWeekName(dateStr: string): string {
 }
 
 export class PatientModel {
-  // جلب بروفايل المريض مع بيانات User الأساسية
   static async findPatientProfile(userId: string) {
     const result = await pool.query(
       `SELECT
@@ -109,7 +115,6 @@ export class PatientModel {
     return row;
   }
 
-  // تحديث بروفايل المريض + تحديث صورة البروفايل في "User" إن وُجدت
   static async updatePatientProfile(userId: string, data: UpdatePatientInput) {
     const client = await pool.connect();
     try {
@@ -169,7 +174,6 @@ export class PatientModel {
     }
   }
 
-  // البحث والفلترة عن مقدمي الخدمة والخدمات المتاحة لهم مع الترتيب والـ Pagination
   static async searchProviders(filters: ProviderSearchFilters) {
     const conditions: string[] = [
       `u."status" = 'Active'`,
@@ -287,7 +291,6 @@ export class PatientModel {
     return result.rows;
   }
 
-  // تفاصيل مقدم خدمة + خدماته + مواعيده الأسبوعية
   static async getProviderDetails(providerId: string) {
     const providerRes = await pool.query(
       `SELECT
@@ -368,23 +371,14 @@ export class PatientModel {
     };
   }
 
-  // حساب الفترات الزمنية المتاحة للحجز لمزود معين وخدمة معينة في تاريخ محدد
+  // حساب الفترات الزمنية المتاحة للحجز مع منع التكرار (Deduplication)
   static async getProviderAvailability(
     providerId: string,
     serviceId: number,
     date: string,
   ) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw {
-        status: 400,
-        message: "date must use YYYY-MM-DD format",
-        code: "INVALID_DATE",
-      };
-    }
-
     const dayOfWeek = getDayOfWeekName(date);
 
-    // 1. جلب بيانات الخدمة المقدمة من هذا المزود (المدة ونوع التقديم والسعر)
     const psRes = await pool.query(
       `SELECT
          ps."providerServiceId",
@@ -411,7 +405,6 @@ export class PatientModel {
       };
     }
 
-    // 2. جلب جداول العمل لهذا اليوم
     const schedulesRes = await pool.query(
       `SELECT sc."assignmentId", sc."startTime", sc."endTime", sc."deliveryMode"
        FROM public."Schedule" sc
@@ -428,7 +421,6 @@ export class PatientModel {
       return [];
     }
 
-    // 3. جلب كل المواعيد المحجوزة غير الملغاة لهذا المزود في نفس التاريخ
     const bookedRes = await pool.query(
       `SELECT a."startTime", a."endTime"
        FROM public."Appointment" a
@@ -447,7 +439,7 @@ export class PatientModel {
       end: timeToMinutes(String(b.endTime)),
     }));
 
-    const availableSlots: Array<{
+    const rawSlots: Array<{
       providerServiceId: number;
       deliveryMode: string;
       price: number;
@@ -476,7 +468,7 @@ export class PatientModel {
           );
 
           if (!hasConflict) {
-            availableSlots.push({
+            rawSlots.push({
               providerServiceId: ps.providerServiceId,
               deliveryMode: ps.deliveryMode,
               price: Number(ps.price),
@@ -489,12 +481,18 @@ export class PatientModel {
       }
     }
 
-    return availableSlots;
+    // تصفية الفترات المتكررة نتيجة تداخل الجداول (Deduplication)
+    const uniqueMap = new Map<string, (typeof rawSlots)[0]>();
+    for (const slot of rawSlots) {
+      const key = `${slot.startTime}-${slot.endTime}-${slot.providerServiceId}`;
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, slot);
+      }
+    }
+
+    return Array.from(uniqueMap.values());
   }
 
-  /**
-   * حجز موعد جديد — يفوض للمنطق الموحد في appointment.service
-   */
   static async createAppointment(
     patientId: string,
     input: CreateAppointmentInput,
@@ -509,7 +507,6 @@ export class PatientModel {
     });
   }
 
-  // عرض حجوزات المريض مع الفلترة بالتاريخ والحالة والترتيب والـ Pagination
   static async listAppointments(
     patientId: string,
     filters: ListAppointmentsFilters = {},
@@ -594,7 +591,6 @@ export class PatientModel {
     return result.rows;
   }
 
-  // جلب تفاصيل حجز محدد للمريض
   static async getAppointmentById(patientId: string, appointmentId: string) {
     const result = await pool.query(
       `SELECT
@@ -643,7 +639,6 @@ export class PatientModel {
     return result.rows[0] || null;
   }
 
-  // إلغاء حجز بواسطة المريض
   static async cancelAppointment(patientId: string, appointmentId: string) {
     const result = await pool.query(
       `UPDATE public."Appointment"
@@ -658,15 +653,3 @@ export class PatientModel {
     return result.rows[0] || null;
   }
 }
-
-/* ============================================================================
- * TODO [Patient Module Remaining Requirements - Missing DB Tables / Endpoints]:
- * 1. Reviews & Ratings System:
- *    - لا يوجد جدول Review في قاعدة البيانات حتى الآن.
- *    - بمجرد إنشاء جدول Review (يحتوي على reviewId, appointmentId, patientId, providerId, rating, comment, createdAt):
- *      * يجب إنشاء endpoint: GET /providers/:providerId/reviews (مع Pagination).
- *      * تحديث searchProviders و getProviderDetails لحساب AVG(rating) و COUNT(*) الفعلي بدلاً من القيمة الافتراضية 0.
- *      * تفعيل فلتر minRating والترتيب sortBy=rating في searchProviders.
- * 2. Provider Bio Field:
- *    - وثيقة الـ API تطلب حقل "bio" في getProviderDetails؛ يجب إضافته لجدول Provider في الداتابيز إذا لزم الأمر.
- * ============================================================================ */

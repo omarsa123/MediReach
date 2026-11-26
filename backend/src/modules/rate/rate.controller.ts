@@ -32,7 +32,7 @@ export class RateController {
 
   static update = catchAsync(async (req: Request, res: Response): Promise<void> => {
     const user = (req as any).user;
-    const appointmentId = req.params.appointmentId;
+    const appointmentId = String(req.params.appointmentId || "");
     const { ratingValue, comment } = req.body;
 
     if (ratingValue === undefined && comment === undefined) {
@@ -56,7 +56,9 @@ export class RateController {
 
   static getByAppointment = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const rate = await RateModel.findByAppointment(req.params.appointmentId);
+      const rate = await RateModel.findByAppointment(
+        String(req.params.appointmentId || ""),
+      );
       if (!rate) {
         res.status(404).json(errorResponse("Rating not found", "NOT_FOUND"));
         return;
@@ -67,7 +69,7 @@ export class RateController {
 
   static listByProvider = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const providerId = req.params.providerId;
+      const providerId = String(req.params.providerId || "");
       const rates = await RateModel.listByProvider(providerId);
       const summary = await RateModel.averageForProvider(providerId);
       res.json(successResponse({ rates, summary }));

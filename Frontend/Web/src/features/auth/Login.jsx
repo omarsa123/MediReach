@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import medreachLogo from './medreach.png';
@@ -16,14 +16,10 @@ export default function Login() {
   const [password, setPassword] = useState('');
 
   // States for Custom Email Autocomplete
-  const [savedEmails, setSavedEmails] = useState([]);
+  const [savedEmails, setSavedEmails] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('medreach_saved_emails') || '[]'); } catch { return []; }
+  });
   const [showEmailList, setShowEmailList] = useState(false);
-
-  // جلب الإيميلات المحفوظة أول ما الصفحة تفتح
-  useEffect(() => {
-    const emails = (() => { try { return JSON.parse(localStorage.getItem('medreach_saved_emails') || '[]'); } catch { return []; } })();
-    setSavedEmails(emails);
-  }, []);
 
   const handleRoleSwitch = (selectedRole) => {
     if (role !== selectedRole) {

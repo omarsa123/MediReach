@@ -12,7 +12,10 @@ export class DiscoveryModel {
     const limit = Math.min(100, Math.max(1, filters.limit || 20));
     const offset = (page - 1) * limit;
 
-    const conditions = [`o."verificationStatus" = 'Approved'`, `u."status" = 'Active'`];
+    const conditions = [
+      `o."verificationStatus" = 'Approved'`,
+      `u."status" = 'Active'`,
+    ];
     const values: unknown[] = [];
     let idx = 1;
 
@@ -120,7 +123,9 @@ export class DiscoveryModel {
       values.push(`%${filters.specialization}%`);
     }
     if (filters.search) {
-      conditions.push(`(u."name" ILIKE $${idx} OR pr."specialization" ILIKE $${idx})`);
+      conditions.push(
+        `(u."name" ILIKE $${idx} OR pr."specialization" ILIKE $${idx})`,
+      );
       values.push(`%${filters.search}%`);
       idx++;
     }
@@ -221,7 +226,7 @@ export class DiscoveryModel {
 
   static async listServices(filters: {
     serviceType?: string;
-    search?: string;
+    search?: string; // أضفنا حقل البحث بالاسم
     page?: number;
     limit?: number;
   }) {
@@ -229,21 +234,27 @@ export class DiscoveryModel {
     const limit = Math.min(100, Math.max(1, filters.limit || 20));
     const offset = (page - 1) * limit;
 
+    // الشرط الأساسي أن تكون الخدمة متاحة
     const conditions = [`"isAvailable" = true`];
     const values: unknown[] = [];
     let idx = 1;
 
+    // فلترة حسب نوع الخدمة (لو موجود)
     if (filters.serviceType) {
       conditions.push(`"serviceType" = $${idx++}`);
       values.push(filters.serviceType);
     }
+
+    // [التحسين المضاف]: دعم البحث المرن بالاسم أو الوصف (ILIKE)
     if (filters.search) {
-      conditions.push(`"name" ILIKE $${idx++}`);
+      conditions.push(`("name" ILIKE $${idx} OR "description" ILIKE $${idx})`);
       values.push(`%${filters.search}%`);
+      idx++;
     }
 
     const where = conditions.join(" AND ");
 
+    // حساب إجمالي الخدمات المطابقة للبحث
     const countRes = await pool.query(
       `SELECT COUNT(*)::int AS total FROM public."Service" WHERE ${where}`,
       values,
@@ -251,6 +262,8 @@ export class DiscoveryModel {
     const totalItems = countRes.rows[0]?.total ?? 0;
 
     values.push(limit, offset);
+
+    // جلب الخدمات مع تطبيق الـ Pagination والترتيب
     const result = await pool.query(
       `SELECT "serviceId", "name", "description", "serviceType", "isAvailable"
        FROM public."Service"
@@ -298,11 +311,7 @@ export class DiscoveryModel {
       `o."latitude" IS NOT NULL`,
       `o."longitude" IS NOT NULL`,
     ];
-    const values: unknown[] = [
-      filters.latitude,
-      filters.longitude,
-      radiusKm,
-    ];
+    const values: unknown[] = [filters.latitude, filters.longitude, radiusKm];
     let idx = 4;
 
     if (filters.organizerType) {

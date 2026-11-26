@@ -37,8 +37,8 @@ export class PaymentController {
 
       const appt = await pool.query(
         `SELECT "appointmentId", "patientId", "priceAtBooking", "status"
-       FROM public."Appointment"
-       WHERE "appointmentId" = $1`,
+         FROM public."Appointment"
+         WHERE "appointmentId" = $1`,
         [appointmentId],
       );
       if (appt.rows.length === 0) {
@@ -131,6 +131,7 @@ export class PaymentController {
       const paymentId = String(req.params.paymentId || "");
       const { paymentStatus } = req.body;
       const allowedStatuses = ["Pending", "Paid", "Failed", "Refunded"];
+
       if (!paymentStatus || !allowedStatuses.includes(paymentStatus)) {
         res
           .status(400)
@@ -155,7 +156,8 @@ export class PaymentController {
         (user.role === "provider" && existing.providerId === user.userId) ||
         (user.role === "organization" && existing.organizerId === user.userId);
 
-      if (!canOutputOrUpdate(canUpdate)) {
+      // تم تبسيط الشرط وإزالة الدالة الزائدة
+      if (!canUpdate) {
         res.status(403).json(errorResponse("Forbidden", "FORBIDDEN"));
         return;
       }
@@ -209,9 +211,4 @@ export class PaymentController {
       res.json(successResponse({ payments }));
     },
   );
-}
-
-// Helper function to safely evaluate boolean checks inside payment updates
-function canOutputOrUpdate(allowed: boolean): boolean {
-  return allowed;
 }

@@ -1,0 +1,25 @@
+<!--
+  انسخ الجزء ده جوه <dict> الرئيسي في:
+  ios/Runner/Info.plist
+-->
+
+<!-- Deep Link: medreach://... -->
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleTypeRole</key>
+    <string>Editor</string>
+    <key>CFBundleURLName</key>
+    <string>com.medreach.app</string>
+    <key>CFBundleURLSchemes</key>
+    <array>
+      <string>medreach</string>
+    </array>
+  </dict>
+</array>
+
+<!--
+  (اختياري) Associated Domains للـ Universal Links:
+  في Xcode → Runner → Signing & Capabilities → + Associated Domains
+  أضف: applinks:yourdomain.com
+-->

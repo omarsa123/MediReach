@@ -33,6 +33,7 @@ function addMinutesToTime(startTime: string, minutes: number): string {
   const h = parts[0] || 0;
   const m = parts[1] || 0;
   const total = h * 60 + m + minutes;
+  // معالجة الالتفاف بسلاسة بحيث لا يتداخل بالسالب أو بشكل خاطئ
   const nh = Math.floor(total / 60) % 24;
   const nm = total % 60;
   return `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}:00`;
@@ -43,9 +44,7 @@ function normalizeTime(t: string): string {
   const h = String(Number(parts[0] || 0)).padStart(2, "0");
   const m = String(Number(parts[1] || 0)).padStart(2, "0");
   const s =
-    parts[2] !== undefined
-      ? String(Number(parts[2])).padStart(2, "0")
-      : "00";
+    parts[2] !== undefined ? String(Number(parts[2])).padStart(2, "0") : "00";
   return `${h}:${m}:${s}`;
 }
 
@@ -69,15 +68,15 @@ function getDayOfWeekName(dateStr: string): string {
  * - السعر ووقت النهاية يُحسبان من السيرفر
  * - التحقق من اعتماد المزود والمؤسسة والخدمة والـ Assignment
  * - منع التعارض على مستوى المزود (كل خدماته)
- * - قفل الصفوف لمنع الحجز المتزامن
- * - التحقق من جدول العمل إن وُجد
+ * - قفل الصفوف لمنع الحجز المتزامن بشكل دقيق
+ * - التحقق من جدول العمل الخاص بيوم الأسبوع إن وُجد
  */
 export async function bookAppointment(data: BookAppointmentInput) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    // 1) جلب الخدمة + الـ Assignment + المزود + المؤسسة مع قفل
+    // 1) جلب الخدمة + الـ Assignment + المزود + المؤسسة
     const ps = await client.query(
       `SELECT
          ps."providerServiceId",
@@ -108,8 +107,7 @@ export async function bookAppointment(data: BookAppointmentInput) {
          ON org."userId" = pa."organizerId"
        JOIN public."User" u_org
          ON u_org."userId" = pa."organizerId"
-       WHERE ps."providerServiceId" = $1
-       FOR UPDATE OF ps`,
+       WHERE ps."providerServiceId" = $1`,
       [data.providerServiceId],
     );
 
@@ -122,6 +120,12 @@ export async function bookAppointment(data: BookAppointmentInput) {
     }
 
     const row = ps.rows[0];
+
+    // قفل واضح وموجه على الـ Assignment لمنع سباق الحجوزات دون قفل عشوائي للجداول المرتبطة
+    await client.query(
+      `SELECT 1 FROM public."ProviderAssignment" WHERE "assignmentId" = $1 FOR UPDATE`,
+      [row.assignmentId],
+    );
 
     if (!row.psActive || !row.osActive) {
       throw {
@@ -171,8 +175,17 @@ export async function bookAppointment(data: BookAppointmentInput) {
     const endTime = addMinutesToTime(startTime, duration);
     const price = Number(row.price);
 
-    // 2) التحقق من جدول العمل (إن وُجدت جداول نشطة لهذا الـ Assignment)
     const dayOfWeek = getDayOfWeekName(data.appointmentDate);
+
+    // 2) التحقق من جدول العمل: فحص ما إذا كان هناك جدول نشط في *نفس* يوم الأسبوع المختار
+    const hasAnyScheduleForDay = await client.query(
+      `SELECT 1 FROM public."Schedule"
+       WHERE "assignmentId" = $1 AND "isActive" = TRUE AND "dayOfWeek" = $2
+       LIMIT 1`,
+      [row.assignmentId, dayOfWeek],
+    );
+
+    // التحقق من أن الموعد يقع ضمن فترات العمل في نفس اليوم
     const scheduleCheck = await client.query(
       `SELECT "scheduleId", "startTime", "endTime", "deliveryMode"
        FROM public."Schedule"
@@ -185,15 +198,11 @@ export async function bookAppointment(data: BookAppointmentInput) {
       [row.assignmentId, dayOfWeek, startTime, endTime],
     );
 
-    // لو فيه أي جدول نشط لهذا الـ Assignment في هذا اليوم → لازم يكون الموعد داخل أحدها
-    const hasAnySchedule = await client.query(
-      `SELECT 1 FROM public."Schedule"
-       WHERE "assignmentId" = $1 AND "isActive" = TRUE
-       LIMIT 1`,
-      [row.assignmentId],
-    );
-
-    if (hasAnySchedule.rows.length > 0 && scheduleCheck.rows.length === 0) {
+    // إذا وُجد جدول نشط في هذا اليوم ولكن الموعد لا يقع ضمن أي فترة منها -> خارج الجدول
+    if (
+      hasAnyScheduleForDay.rows.length > 0 &&
+      scheduleCheck.rows.length === 0
+    ) {
       throw {
         status: 400,
         message: "Selected time is outside the provider's working schedule",
@@ -296,7 +305,7 @@ export async function transitionAppointmentStatus(
     }
 
     const cancelledByValue =
-      nextStatus === "Cancelled" ? cancelledBy ?? null : null;
+      nextStatus === "Cancelled" ? (cancelledBy ?? null) : null;
 
     const result = await client.query(
       `UPDATE public."Appointment"

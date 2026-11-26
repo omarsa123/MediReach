@@ -153,7 +153,6 @@ organizationRouter.patch(
   OrganizationController.updateAmbulanceStatus,
 );
 
-
 organizationRouter.get(
   "/appointments",
   requireAuth,
@@ -165,6 +164,21 @@ organizationRouter.get(
   requireAuth,
   authorizeRoles("organization"),
   OrganizationController.getAssignment,
+);
+// لحذف طبيب من قسم معين
+organizationRouter.delete(
+  "/departments/:departmentId/providers/:assignmentId",
+  requireAuth,
+  authorizeRoles("organization"),
+  OrganizationController.removeProviderFromDepartment,
+);
+
+// لعرض تقييمات ومراجعات المؤسسة
+organizationRouter.get(
+  "/reviews",
+  requireAuth,
+  authorizeRoles("organization"),
+  OrganizationController.getOrganizationReviews,
 );
 
 export { organizationRouter };

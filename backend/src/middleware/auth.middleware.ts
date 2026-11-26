@@ -31,8 +31,27 @@ export const requireAuth = catchAsync(
 
     try {
       // 2. فك تشفير التوكن والتحقق من صلاحيته
-      const secret = process.env.JWT_SECRET || "your_fallback_secret_key";
-      const decoded = jwt.verify(token, secret) as { userId: string };
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        res.status(500).json({
+          success: false,
+          error: "Server authentication configuration error.",
+          code: "AUTH_CONFIG_ERROR",
+        });
+        return;
+      }
+
+      let decoded: { userId: string };
+      try {
+        decoded = jwt.verify(token, secret) as { userId: string };
+      } catch {
+        res.status(401).json({
+          success: false,
+          error: "Invalid or expired token.",
+          code: "INVALID_TOKEN",
+        });
+        return;
+      }
 
       // 3. التأكد إن المستخدم لسه موجود وحسابه نشط (Active) في قاعدة البيانات
       const user = await UserModel.findById(decoded.userId);
@@ -52,11 +71,7 @@ export const requireAuth = catchAsync(
 
       next();
     } catch (error) {
-      res.status(401).json({
-        success: false,
-        error: "Invalid or expired token.",
-        code: "INVALID_TOKEN",
-      });
+      next(error);
     }
   },
 );
@@ -73,10 +88,11 @@ export const authorizeRoles = (...allowedRoles: string[]) => {
       return;
     }
 
-    // نجيب البروفايل الكامل عشان نعرف دوره الفعلي في الداتا بيز
-    const fullUser = await UserModel.findById(authUser.userId);
+    const userRole = authUser.role
+      ? String(authUser.role)
+      : (await UserModel.findById(authUser.userId))?.role;
 
-    if (!fullUser || !allowedRoles.includes(fullUser.role)) {
+    if (!userRole || !allowedRoles.includes(userRole)) {
       res
         .status(403)
         .json(
@@ -88,8 +104,7 @@ export const authorizeRoles = (...allowedRoles: string[]) => {
       return;
     }
 
-    // نحفظ الدور في req.user عشان نستخدمه جوه الكونترولر لو احتجناه
-    (req as any).user.role = fullUser.role;
+    (req as any).user.role = userRole;
     next();
   };
 };

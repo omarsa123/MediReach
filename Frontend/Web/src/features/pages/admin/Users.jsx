@@ -5,7 +5,14 @@ export default function Users() {
   const [users,setUsers]=useState([]); const [pagination,setPagination]=useState(null); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
   const [page,setPage]=useState(1); const [status,setStatus]=useState(''); const [role,setRole]=useState(''); const [search,setSearch]=useState(''); const [searchTerm,setSearchTerm]=useState('');
   const load=useCallback(async()=>{setLoading(true);try{const result=await getUsersPage({page,limit:10,status,role,search:searchTerm});setUsers(result.users);setPagination(result.pagination);setError('');}catch(e){setError(e.message);}finally{setLoading(false);}},[page,status,role,searchTerm]);
-  useEffect(()=>{load();},[load]);
+  useEffect(()=>{
+    let active=true;
+    getUsersPage({page,limit:10,status,role,search:searchTerm})
+      .then((result)=>{if(active){setUsers(result.users);setPagination(result.pagination);setError('');}})
+      .catch((e)=>{if(active)setError(e.message);})
+      .finally(()=>{if(active)setLoading(false);});
+    return ()=>{active=false;};
+  },[page,status,role,searchTerm]);
   const changeStatus=async(user)=>{const next=user.status==='Suspended'?'Active':'Suspended';if(!window.confirm(`Change ${user.name} status to ${next}?`))return;try{await toggleUserStatus(user.userId,next);await load();}catch(e){setError(e.message);}};
   const applySearch=(e)=>{e.preventDefault();setPage(1);setSearchTerm(search.trim());};
   return <><div className="page-header"><div className="header-titles"><h1>User management</h1><p>Search, filter and manage platform accounts.</p></div></div>

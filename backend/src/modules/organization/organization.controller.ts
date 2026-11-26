@@ -124,7 +124,9 @@ export class OrganizationController {
           .json(errorResponse("Organizer service not found", "NOT_FOUND"));
         return;
       }
-      res.json(successResponse({ service: updated }, "Organizer service updated"));
+      res.json(
+        successResponse({ service: updated }, "Organizer service updated"),
+      );
     },
   );
 
@@ -209,9 +211,7 @@ export class OrganizationController {
           .json(errorResponse("Assignment not found", "NOT_FOUND"));
         return;
       }
-      res.json(
-        successResponse({ assignment }, "Assignment status updated"),
-      );
+      res.json(successResponse({ assignment }, "Assignment status updated"));
     },
   );
 
@@ -288,7 +288,9 @@ export class OrganizationController {
           .json(errorResponse("Provider service not found", "NOT_FOUND"));
         return;
       }
-      res.json(successResponse({ service: updated }, "Provider service updated"));
+      res.json(
+        successResponse({ service: updated }, "Provider service updated"),
+      );
     },
   );
 
@@ -415,9 +417,7 @@ export class OrganizationController {
         plateNumber,
         status,
       });
-      res
-        .status(201)
-        .json(successResponse({ ambulance }, "Ambulance created"));
+      res.status(201).json(successResponse({ ambulance }, "Ambulance created"));
     },
   );
 
@@ -444,9 +444,7 @@ export class OrganizationController {
         status,
       );
       if (!ambulance) {
-        res
-          .status(404)
-          .json(errorResponse("Ambulance not found", "NOT_FOUND"));
+        res.status(404).json(errorResponse("Ambulance not found", "NOT_FOUND"));
         return;
       }
       res.json(successResponse({ ambulance }, "Ambulance status updated"));
@@ -481,5 +479,68 @@ export class OrganizationController {
       res.json(successResponse({ assignment }));
     },
   );
+  // إزالة طبيب من قسم
+  static removeProviderFromDepartment = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const departmentId = Number(req.params.departmentId);
+      const assignmentId = Number(req.params.assignmentId);
 
+      if (!departmentId || !assignmentId) {
+        res
+          .status(400)
+          .json(
+            errorResponse(
+              "departmentId and assignmentId are required",
+              "MISSING_FIELDS",
+            ),
+          );
+        return;
+      }
+
+      const removed = await OrganizationModel.removeProviderFromDepartment(
+        user.userId,
+        departmentId,
+        assignmentId,
+      );
+
+      if (!removed) {
+        res
+          .status(404)
+          .json(
+            errorResponse(
+              "Assignment link not found in department",
+              "NOT_FOUND",
+            ),
+          );
+        return;
+      }
+
+      res.json(
+        successResponse(
+          { link: removed },
+          "Provider removed from department successfully",
+        ),
+      );
+    },
+  );
+
+  // جلب تقييمات المؤسسة
+  static getOrganizationReviews = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const user = (req as any).user;
+      const [reviews, stats] = await Promise.all([
+        OrganizationModel.listOrganizationReviews(user.userId),
+        OrganizationModel.averageOrganizationRating(user.userId),
+      ]);
+
+      res.json(
+        successResponse({
+          averageRating: Number(stats?.averageRating || 0),
+          totalRatings: Number(stats?.totalRatings || 0),
+          reviews,
+        }),
+      );
+    },
+  );
 }

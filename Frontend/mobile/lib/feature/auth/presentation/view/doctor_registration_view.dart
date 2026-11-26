@@ -17,7 +17,16 @@ import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 
 class DoctorRegistrationView extends StatefulWidget {
-  const DoctorRegistrationView({super.key});
+  final String? registrationToken;
+  final String? googleEmail;
+  final String? googleName;
+
+  const DoctorRegistrationView({
+    super.key,
+    this.registrationToken,
+    this.googleEmail,
+    this.googleName,
+  });
 
   @override
   State<DoctorRegistrationView> createState() => _DoctorRegistrationViewState();
@@ -34,11 +43,19 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
   final _confirmPasswordController = TextEditingController();
 
   String _countryCode = '+20';
+  bool get _isGoogleRegistration => widget.registrationToken != null;
   String? _selectedSpecialty;
   String _providerType = 'Doctor';
 
   File? _profileImage;
   final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _fullNameController.text = widget.googleName ?? '';
+    _emailController.text = widget.googleEmail ?? '';
+  }
 
   static const List<String> _providerRoles = [
     'Doctor',
@@ -183,16 +200,33 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
 
     if (!mounted) return;
 
-    context.read<AuthCubit>().registerDoctor(
-      name: _fullNameController.text.trim(),
-      email: _emailController.text.trim(),
-      phone: fullPhone,
-      password: _passwordController.text,
-      specialization: _selectedSpecialty!,
-      licenseNumber: _licenseController.text.trim(),
-      providerType: _providerType,
-      profileImagePath: base64Image,
-    );
+    if (_isGoogleRegistration) {
+      if (base64Image == null) {
+        AuthSnackBar.show(context, 'Please add your profile photo', type: AuthSnackBarType.warning);
+        return;
+      }
+      context.read<AuthCubit>().registerWithGoogle({
+        'registrationToken': widget.registrationToken,
+        'role': 'provider',
+        'name': _fullNameController.text.trim(),
+        'phone': fullPhone,
+        'providerType': _providerType,
+        'specialization': _selectedSpecialty!,
+        'licenseNumber': _licenseController.text.trim(),
+        'profileImageBase64': base64Image,
+      });
+    } else {
+      context.read<AuthCubit>().registerDoctor(
+        name: _fullNameController.text.trim(),
+        email: _emailController.text.trim(),
+        phone: fullPhone,
+        password: _passwordController.text,
+        specialization: _selectedSpecialty!,
+        licenseNumber: _licenseController.text.trim(),
+        providerType: _providerType,
+        profileImagePath: base64Image,
+      );
+    }
   }
 
   void _onProviderTypeChanged(String? value) {
@@ -303,6 +337,13 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
             '/email_verification',
             arguments: state.email,
           );
+        } else if (state is AuthGoogleRegistrationSuccess) {
+          Navigator.pushNamedAndRemoveUntil(context, '/provider_login', (route) => false);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) {
+              AuthSnackBar.show(context, 'Your provider account is awaiting admin approval.', type: AuthSnackBarType.success);
+            }
+          });
         } else if (state is AuthAuthenticated) {
           Navigator.pushReplacementNamed(context, '/provider_login');
         } else if (state is AuthError) {
@@ -379,6 +420,7 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
                       keyboardType: TextInputType.emailAddress,
                       prefixIcon: Icons.mail_outline_rounded,
                       validator: Validators.email,
+                      readOnly: _isGoogleRegistration,
                     ),
 
                     const SizedBox(height: 14),
@@ -479,30 +521,26 @@ class _DoctorRegistrationViewState extends State<DoctorRegistrationView> {
 
                     const SizedBox(height: 14),
 
-                    AuthTextField(
-                      label: 'Password',
-                      hintText: 'Enter your password',
-                      controller: _passwordController,
-                      isPassword: true,
-                      prefixIcon: Icons.lock_outline_rounded,
-                      validator: Validators.password,
-                    ),
-
-                    const SizedBox(height: 14),
-
-                    AuthTextField(
-                      label: 'Confirm password',
-                      hintText: 'Confirm your password',
-                      controller: _confirmPasswordController,
-                      isPassword: true,
-                      prefixIcon: Icons.lock_outline_rounded,
-                      validator: (v) => Validators.confirmPassword(
-                        v,
-                        _passwordController.text,
+                    if (!_isGoogleRegistration) ...[
+                      AuthTextField(
+                        label: 'Password',
+                        hintText: 'Enter your password',
+                        controller: _passwordController,
+                        isPassword: true,
+                        prefixIcon: Icons.lock_outline_rounded,
+                        validator: Validators.password,
                       ),
-                    ),
-
-                    const SizedBox(height: 16),
+                      const SizedBox(height: 14),
+                      AuthTextField(
+                        label: 'Confirm password',
+                        hintText: 'Confirm your password',
+                        controller: _confirmPasswordController,
+                        isPassword: true,
+                        prefixIcon: Icons.lock_outline_rounded,
+                        validator: (v) => Validators.confirmPassword(v, _passwordController.text),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
 
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 2),

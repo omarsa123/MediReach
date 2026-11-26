@@ -16,7 +16,9 @@ export class ServiceController {
 
   static getById = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const service = await ServiceModel.findById(req.params.serviceId);
+      const service = await ServiceModel.findById(
+        String(req.params.serviceId || ""),
+      );
       if (!service) {
         res
           .status(404)
@@ -50,7 +52,10 @@ export class ServiceController {
 
   static update = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const service = await ServiceModel.update(req.params.serviceId, req.body);
+      const service = await ServiceModel.update(
+        String(req.params.serviceId || ""),
+        req.body,
+      );
       if (!service) {
         res
           .status(404)

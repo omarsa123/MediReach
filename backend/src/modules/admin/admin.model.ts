@@ -108,17 +108,21 @@ export class AdminModel {
     finally { client.release(); }
   }
 
-  static async listUsers(filters?: { status?: string; role?: string }) {
-    // role is derived by existence in role tables
-    let roleJoin = "";
-    let roleSelect = `
+  static async listUsers(filters?: {
+    status?: string;
+    role?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    const roleExpr = `
       CASE
         WHEN EXISTS (SELECT 1 FROM public."Admin" a WHERE a."userId" = u."userId") THEN 'admin'
         WHEN EXISTS (SELECT 1 FROM public."Organization" o WHERE o."userId" = u."userId") THEN 'organization'
         WHEN EXISTS (SELECT 1 FROM public."Provider" p WHERE p."userId" = u."userId") THEN 'provider'
         WHEN EXISTS (SELECT 1 FROM public."Patient" p WHERE p."userId" = u."userId") THEN 'patient'
         ELSE 'unknown'
-      END AS "role"`;
+      END`;
 
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -129,27 +133,45 @@ export class AdminModel {
       values.push(filters.status);
     }
 
+    if (filters?.search) {
+      conditions.push(
+        `(u."name" ILIKE $${idx} OR u."email" ILIKE $${idx} OR u."username" ILIKE $${idx} OR u."phone" ILIKE $${idx})`,
+      );
+      values.push(`%${filters.search}%`);
+      idx++;
+    }
+
+    if (filters?.role) {
+      conditions.push(`(${roleExpr}) = $${idx++}`);
+      values.push(filters.role);
+    }
+
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM public."User" u ${where}`,
+      values,
+    );
+    const total = countResult.rows[0]?.total ?? 0;
+
+    const limit = filters?.limit ?? 25;
+    const offset = filters?.offset ?? 0;
+    const dataValues = [...values, limit, offset];
 
     const result = await pool.query(
       `SELECT
          u."userId", u."name", u."username", u."email", u."phone",
          u."status", u."createdAt",
-         ${roleSelect}
+         (${roleExpr}) AS "role"
        FROM public."User" u
-       ${roleJoin}
        ${where}
        ORDER BY u."createdAt" DESC
-       LIMIT 200`,
-      values,
+       LIMIT $${idx++} OFFSET $${idx}`,
+      dataValues,
     );
 
-    let rows = result.rows;
-    if (filters?.role) {
-      rows = rows.filter((r: any) => r.role === filters.role);
-    }
-    return rows;
+    return { users: result.rows, total };
   }
 
   static async updateUserStatus(
@@ -189,6 +211,10 @@ export class AdminModel {
         (SELECT COUNT(*)::int FROM public."Patient") AS "totalPatients",
         (SELECT COUNT(*)::int FROM public."Provider") AS "totalProviders",
         (SELECT COUNT(*)::int FROM public."Organization") AS "totalOrganizations",
+        (SELECT COUNT(*)::int FROM public."Organization" WHERE "organizerType" = 'Hospital') AS "totalHospitals",
+        (SELECT COUNT(*)::int FROM public."Organization" WHERE "organizerType" = 'Clinic') AS "totalClinics",
+        (SELECT COUNT(*)::int FROM public."Organization" WHERE "organizerType" = 'Lab') AS "totalLabs",
+        (SELECT COUNT(*)::int FROM public."Organization" WHERE "organizerType" = 'PhysiotherapyCenter') AS "totalPhysio",
         (SELECT COUNT(*)::int FROM public."Appointment") AS "totalAppointments",
         (SELECT COUNT(*)::int FROM public."Appointment" WHERE "status" = 'Pending') AS "pendingAppointments",
         (SELECT COUNT(*)::int FROM public."Provider" WHERE "verificationStatus" = 'Pending') AS "pendingProviders",

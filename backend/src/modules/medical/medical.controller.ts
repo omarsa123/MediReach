@@ -22,6 +22,10 @@ export class MedicalController {
   static listDocuments = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const documents = await MedicalModel.listDocuments(user.userId);
       res.json(successResponse({ documents }));
     },
@@ -30,23 +34,27 @@ export class MedicalController {
   static getDocument = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const documentId = String(req.params.documentId || "");
-      const document = await MedicalModel.getDocument(
-        documentId,
-        user.role === "patient" ? user.userId : undefined,
-      );
+      const document = await MedicalModel.getDocument(documentId);
       if (!document) {
         res.status(404).json(errorResponse("Document not found", "NOT_FOUND"));
         return;
       }
-      if (user.role === "patient" && document.patientId !== user.userId) {
+
+      const hasAccess = await MedicalModel.canAccessDocument(
+        user.userId,
+        user.role,
+        document.patientId,
+      );
+      if (!hasAccess) {
         res.status(403).json(errorResponse("Forbidden", "FORBIDDEN"));
         return;
       }
-      if (user.role !== "patient" && user.role !== "admin") {
-        res.status(403).json(errorResponse("Forbidden", "FORBIDDEN"));
-        return;
-      }
+
       res.json(successResponse({ document }));
     },
   );
@@ -54,6 +62,10 @@ export class MedicalController {
   static createDocument = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const { fileName, fileType, fileUrl, fileBase64, description } = req.body;
 
       let finalUrl = fileUrl as string | undefined;
@@ -95,11 +107,45 @@ export class MedicalController {
   static updateDocument = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const documentId = String(req.params.documentId || "");
+
+      const existingDoc = await MedicalModel.getDocument(
+        documentId,
+        user.userId,
+      );
+      if (!existingDoc) {
+        res.status(404).json(errorResponse("Document not found", "NOT_FOUND"));
+        return;
+      }
+
+      const { fileName, fileType, fileUrl, fileBase64, description } = req.body;
+      let finalUrl = fileUrl as string | undefined;
+
+      if (fileBase64) {
+        const { StorageService } =
+          await import("../../services/storage.service.js");
+        finalUrl = await StorageService.uploadMedicalFile({
+          base64Data: fileBase64,
+          ownerId: user.userId,
+          kind: "medical-document",
+          fileName: fileName || existingDoc.fileName,
+          maxSizeMb: 20,
+        });
+      }
+
       const updated = await MedicalModel.updateDocument(
         documentId,
         user.userId,
-        req.body,
+        {
+          fileName,
+          fileType,
+          fileUrl: finalUrl,
+          description,
+        },
       );
       if (!updated) {
         res.status(404).json(errorResponse("Document not found", "NOT_FOUND"));
@@ -112,6 +158,10 @@ export class MedicalController {
   static deleteDocument = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const documentId = String(req.params.documentId || "");
       const deleted = await MedicalModel.deleteDocument(
         documentId,
@@ -129,6 +179,10 @@ export class MedicalController {
   static getNote = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const appointmentId = String(req.params.appointmentId || "");
       const parties = await MedicalModel.getAppointmentParties(appointmentId);
       if (!parties) {
@@ -153,6 +207,10 @@ export class MedicalController {
   static listMyNotes = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const notes = await MedicalModel.listNotesByPatient(user.userId);
       res.json(successResponse({ notes }));
     },
@@ -161,6 +219,10 @@ export class MedicalController {
   static listProviderNotes = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const notes = await MedicalModel.listNotesByProvider(user.userId);
       res.json(successResponse({ notes }));
     },
@@ -169,6 +231,10 @@ export class MedicalController {
   static upsertNote = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const { appointmentId, content } = req.body;
       if (!appointmentId || content === undefined) {
         res
@@ -208,6 +274,10 @@ export class MedicalController {
   static getPrescription = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const appointmentId = String(req.params.appointmentId || "");
       const parties = await MedicalModel.getAppointmentParties(appointmentId);
       if (!parties) {
@@ -235,6 +305,10 @@ export class MedicalController {
   static listMyPrescriptions = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const prescriptions = await MedicalModel.listPrescriptionsByPatient(
         user.userId,
       );
@@ -245,6 +319,10 @@ export class MedicalController {
   static listProviderPrescriptions = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const prescriptions = await MedicalModel.listPrescriptionsByProvider(
         user.userId,
       );
@@ -255,6 +333,10 @@ export class MedicalController {
   static createPrescription = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const { appointmentId, description } = req.body;
       if (!appointmentId || description === undefined) {
         res
@@ -296,6 +378,10 @@ export class MedicalController {
   static getRecording = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const appointmentId = String(req.params.appointmentId || "");
       const parties = await MedicalModel.getAppointmentParties(appointmentId);
       if (!parties) {
@@ -332,6 +418,10 @@ export class MedicalController {
   static createRecordingUploadUrl = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const { appointmentId, fileName, contentType } = req.body ?? {};
       if (!appointmentId || !fileName || !contentType) {
         res
@@ -395,6 +485,10 @@ export class MedicalController {
   static confirmRecordingUpload = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const { appointmentId, storagePath, durationSeconds } = req.body ?? {};
       if (!appointmentId || !storagePath) {
         res
@@ -470,6 +564,10 @@ export class MedicalController {
   static createRecording = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const { appointmentId, fileUrl, fileBase64, durationSeconds } = req.body;
       if (!appointmentId) {
         res
@@ -543,6 +641,10 @@ export class MedicalController {
   static getMyOnlineRoom = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const room = await MedicalModel.getOnlineRoom(user.userId);
       res.json(successResponse({ room }));
     },
@@ -551,6 +653,10 @@ export class MedicalController {
   static getProviderOnlineRoom = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const providerId = String(req.params.providerId || "").trim();
       if (!providerId) {
         res
@@ -590,6 +696,10 @@ export class MedicalController {
   static upsertOnlineRoom = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const user = (req as any).user;
+      if (!user) {
+        res.status(401).json(errorResponse("Unauthorized", "UNAUTHORIZED"));
+        return;
+      }
       const { roomLink, status } = req.body;
       if (!roomLink) {
         res

@@ -13,8 +13,14 @@ adminRouter.use(requireAuth, authorizeRoles("admin"));
 adminRouter.get("/dashboard", AdminController.dashboard);
 // Compatibility endpoints used by the earlier mobile frontend
 adminRouter.get("/stats", AdminController.legacyStats);
-adminRouter.get("/pending-organizations", AdminController.legacyPendingOrganizations);
-adminRouter.post("/verify-organization", AdminController.legacyVerifyOrganization);
+adminRouter.get(
+  "/pending-organizations",
+  AdminController.legacyPendingOrganizations,
+);
+adminRouter.post(
+  "/verify-organization",
+  AdminController.legacyVerifyOrganization,
+);
 adminRouter.get("/organizations", AdminController.legacyOrganizations);
 adminRouter.post("/toggle-user-status", AdminController.legacyToggleUserStatus);
 
@@ -36,4 +42,5 @@ adminRouter.patch(
 adminRouter.get("/users", AdminController.listUsers);
 adminRouter.patch("/users/:userId/status", AdminController.updateUserStatus);
 
+adminRouter.post("/hard-delete", AdminController.hardDeleteUser);
 export { adminRouter };

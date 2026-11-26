@@ -1,46 +1,110 @@
 import type { Request, Response } from "express";
 import { AdminModel } from "./admin.model.js";
 import { catchAsync } from "../../utils/catchAsync.js";
+import {
+  paginationMeta,
+  parsePagination,
+} from "../../utils/pagination.utils.js";
 import { errorResponse, successResponse } from "../../utils/response.utils.js";
+import { AuthService } from "../authUser/auth.service.js";
 
 export class AdminController {
   // Legacy mobile API compatibility
   static legacyStats = catchAsync(async (_req: Request, res: Response) => {
     const stats: any = await AdminModel.dashboardStats();
     const orgs = await AdminModel.listOrganizations();
-    const count = (type: string) => orgs.filter((o: any) => o.organizerType === type).length;
-    res.json(successResponse({ ...stats, totalHospitals: count("Hospital"), totalClinics: count("Clinic"), totalLabs: count("Lab"), totalPhysio: count("PhysiotherapyCenter"), pendingCount: stats.pendingOrganizations }));
+    const count = (type: string) =>
+      orgs.filter((o: any) => o.organizerType === type).length;
+    res.json(
+      successResponse({
+        ...stats,
+        totalHospitals: count("Hospital"),
+        totalClinics: count("Clinic"),
+        totalLabs: count("Lab"),
+        totalPhysio: count("PhysiotherapyCenter"),
+        pendingCount: stats.pendingOrganizations,
+      }),
+    );
   });
 
-  static legacyPendingOrganizations = catchAsync(async (_req: Request, res: Response) => {
-    const organizations = await AdminModel.listPendingOrganizations();
-    res.json(successResponse(organizations, "Pending organizations retrieved successfully"));
-  });
+  static legacyPendingOrganizations = catchAsync(
+    async (_req: Request, res: Response) => {
+      const organizations = await AdminModel.listPendingOrganizations();
+      res.json(
+        successResponse(
+          organizations,
+          "Pending organizations retrieved successfully",
+        ),
+      );
+    },
+  );
 
-  static legacyVerifyOrganization = catchAsync(async (req: Request, res: Response) => {
-    const { organizationId, status } = req.body || {};
-    if (!organizationId || !["Approved", "Rejected"].includes(status)) {
-      res.status(400).json(errorResponse("organizationId and valid status are required", "INVALID_INPUT")); return;
-    }
-    const organization = await AdminModel.updateOrganizationVerification(organizationId, status);
-    if (!organization) { res.status(404).json(errorResponse("Organization not found", "NOT_FOUND")); return; }
-    res.json(successResponse(organization, `Organization has been ${status.toLowerCase()} successfully`));
-  });
+  static legacyVerifyOrganization = catchAsync(
+    async (req: Request, res: Response) => {
+      const { organizationId, status } = req.body || {};
+      if (!organizationId || !["Approved", "Rejected"].includes(status)) {
+        res
+          .status(400)
+          .json(
+            errorResponse(
+              "organizationId and valid status are required",
+              "INVALID_INPUT",
+            ),
+          );
+        return;
+      }
+      const organization = await AdminModel.updateOrganizationVerification(
+        organizationId,
+        status,
+      );
+      if (!organization) {
+        res
+          .status(404)
+          .json(errorResponse("Organization not found", "NOT_FOUND"));
+        return;
+      }
+      res.json(
+        successResponse(
+          organization,
+          `Organization has been ${status.toLowerCase()} successfully`,
+        ),
+      );
+    },
+  );
 
-  static legacyOrganizations = catchAsync(async (req: Request, res: Response) => {
-    const organizations = await AdminModel.listOrganizations(req.query.type as string | undefined);
-    res.json(successResponse(organizations, "Organizations retrieved successfully"));
-  });
+  static legacyOrganizations = catchAsync(
+    async (req: Request, res: Response) => {
+      const organizations = await AdminModel.listOrganizations(
+        req.query.type as string | undefined,
+      );
+      res.json(
+        successResponse(organizations, "Organizations retrieved successfully"),
+      );
+    },
+  );
 
-  static legacyToggleUserStatus = catchAsync(async (req: Request, res: Response) => {
-    const { userId, status } = req.body || {};
-    if (!userId || !["Active", "Suspended"].includes(status)) {
-      res.status(400).json(errorResponse("userId and valid status are required", "INVALID_INPUT")); return;
-    }
-    const user = await AdminModel.updateUserStatus(userId, status);
-    if (!user) { res.status(404).json(errorResponse("User not found", "NOT_FOUND")); return; }
-    res.json(successResponse(user, `User status changed to ${status}`));
-  });
+  static legacyToggleUserStatus = catchAsync(
+    async (req: Request, res: Response) => {
+      const { userId, status } = req.body || {};
+      if (!userId || !["Active", "Suspended"].includes(status)) {
+        res
+          .status(400)
+          .json(
+            errorResponse(
+              "userId and valid status are required",
+              "INVALID_INPUT",
+            ),
+          );
+        return;
+      }
+      const user = await AdminModel.updateUserStatus(userId, status);
+      if (!user) {
+        res.status(404).json(errorResponse("User not found", "NOT_FOUND"));
+        return;
+      }
+      res.json(successResponse(user, `User status changed to ${status}`));
+    },
+  );
 
   static dashboard = catchAsync(
     async (_req: Request, res: Response): Promise<void> => {
@@ -72,7 +136,7 @@ export class AdminController {
         return;
       }
       const provider = await AdminModel.updateProviderVerification(
-        req.params.providerId,
+        String(req.params.providerId || ""),
         status,
       );
       if (!provider) {
@@ -106,7 +170,7 @@ export class AdminController {
         return;
       }
       const organization = await AdminModel.updateOrganizationVerification(
-        req.params.organizationId,
+        String(req.params.organizationId || ""),
         status,
       );
       if (!organization) {
@@ -123,10 +187,25 @@ export class AdminController {
 
   static listUsers = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
-      const status = req.query.status as string | undefined;
-      const role = req.query.role as string | undefined;
-      const users = await AdminModel.listUsers({ status, role });
-      res.json(successResponse({ users }));
+      const status =
+        (req.query.status as string | undefined)?.trim() || undefined;
+      const role = (req.query.role as string | undefined)?.trim() || undefined;
+      const search =
+        (req.query.search as string | undefined)?.trim() || undefined;
+      const { page, limit, offset } = parsePagination(req.query);
+      const { users, total } = await AdminModel.listUsers({
+        status,
+        role,
+        search,
+        limit,
+        offset,
+      });
+      res.json(
+        successResponse({
+          users,
+          pagination: paginationMeta(total, page, limit),
+        }),
+      );
     },
   );
 
@@ -145,12 +224,37 @@ export class AdminController {
           );
         return;
       }
-      const user = await AdminModel.updateUserStatus(req.params.userId, status);
+      const user = await AdminModel.updateUserStatus(
+        String(req.params.userId || ""),
+        status,
+      );
       if (!user) {
         res.status(404).json(errorResponse("User not found", "NOT_FOUND"));
         return;
       }
       res.json(successResponse({ user }, "User status updated"));
+    },
+  );
+  static hardDeleteUser = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      const email = String(req.body?.email || req.query?.email || "").trim();
+      if (!email) {
+        res
+          .status(400)
+          .json(
+            errorResponse("Email is required for deletion", "MISSING_EMAIL"),
+          );
+        return;
+      }
+
+      // استدعاء دالة الحذف الجذري من AuthService لضمان مسحه من Supabase والداتابيز
+      const result = await AuthService.hardDeleteUser(email);
+      res.json(
+        successResponse(
+          result,
+          "User deleted permanently from system and auth",
+        ),
+      );
     },
   );
 }

@@ -23,7 +23,13 @@ export default function AdminDashboard() {
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const refresh = async () => { try { setStats(await getAdminStats()); setError(''); } catch (e) { setError(e.message); } };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    let active = true;
+    getAdminStats()
+      .then((data) => { if (active) { setStats(data); setError(''); } })
+      .catch((e) => { if (active) setError(e.message); });
+    return () => { active = false; };
+  }, []);
   const logout = () => { clearSession(); navigate('/login', { replace: true }); };
   return <div className="admin-layout">
     <aside className="admin-sidebar">

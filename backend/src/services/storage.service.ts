@@ -1,12 +1,14 @@
 import { supabaseAdmin } from "../config/subabase.js";
 
-type UploadKind = "profile" | "medical-document" | "recording";
+type UploadKind = "profile" | "medical-document" | "recording" | "organization-license";
 
 const BUCKETS: Record<UploadKind, string> = {
   profile: process.env.SUPABASE_STORAGE_BUCKET || "profile-images",
   "medical-document":
     process.env.SUPABASE_MEDICAL_DOCS_BUCKET || "medical-documents",
   recording: process.env.SUPABASE_RECORDINGS_BUCKET || "recordings",
+  "organization-license":
+    process.env.SUPABASE_ORG_LICENSES_BUCKET || "organization-licenses",
 };
 
 export class StorageService {
@@ -170,5 +172,123 @@ export class StorageService {
       .getPublicUrl(data.path);
 
     return publicData.publicUrl;
+  }
+
+  /**
+   * Upload organization license document (PDF, JPG, PNG) from base64 data URL.
+   */
+  static async uploadOrganizationLicense(
+    base64Data: unknown,
+    organizationId: string,
+  ): Promise<string> {
+    if (!base64Data || typeof base64Data !== "string") {
+      throw {
+        status: 400,
+        message: "licenseDocumentBase64 is required",
+        code: "LICENSE_DOCUMENT_REQUIRED",
+      };
+    }
+
+    const match = base64Data.match(
+      /^data:(application\/pdf|image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/,
+    );
+    if (!match) {
+      throw {
+        status: 400,
+        message: "License must be a PDF, JPG, or PNG base64 data URL.",
+        code: "INVALID_LICENSE_FORMAT",
+      };
+    }
+
+    const mime = match[1];
+    const buffer = Buffer.from(match[2], "base64");
+    if (!buffer.length || buffer.length > 8 * 1024 * 1024) {
+      throw {
+        status: 400,
+        message: "License document must be smaller than 8 MB",
+        code: "LICENSE_SIZE_INVALID",
+      };
+    }
+
+    const ext = mime === "application/pdf" ? "pdf" : mime === "image/jpeg" ? "jpg" : "png";
+    const bucket = BUCKETS["organization-license"];
+    const path = `${organizationId}/${Date.now()}.${ext}`;
+
+    const { data, error } = await supabaseAdmin.storage
+      .from(bucket)
+      .upload(path, buffer, {
+        contentType: mime,
+        upsert: true,
+        cacheControl: "3600",
+      });
+
+    if (error || !data) {
+      throw {
+        status: 502,
+        message: error?.message || "License upload failed",
+        code: "LICENSE_UPLOAD_FAILED",
+      };
+    }
+
+    const { data: publicData } = supabaseAdmin.storage
+      .from(bucket)
+      .getPublicUrl(data.path);
+
+    return publicData.publicUrl;
+  }
+
+  /**
+   * Create a signed upload URL for direct-to-Supabase session recording upload.
+   */
+  static async createRecordingUploadUrl(options: {
+    providerId: string;
+    appointmentId: string | number;
+    fileName: string;
+    contentType: string;
+  }): Promise<{ signedUrl: string; token: string; path: string }> {
+    const safeName = options.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `${options.providerId}/${options.appointmentId}/${Date.now()}_${safeName}`;
+    const bucket = BUCKETS.recording;
+
+    const { data, error } = await supabaseAdmin.storage
+      .from(bucket)
+      .createSignedUploadUrl(path);
+
+    if (error || !data) {
+      throw {
+        status: 502,
+        message: error?.message || "Failed to create recording upload URL",
+        code: "RECORDING_UPLOAD_URL_FAILED",
+      };
+    }
+
+    return {
+      signedUrl: data.signedUrl,
+      token: data.token,
+      path: data.path,
+    };
+  }
+
+  /**
+   * Create a short-lived signed download URL for a stored session recording.
+   */
+  static async createRecordingDownloadUrl(
+    storagePath: string,
+    expiresInSeconds = 3600,
+  ): Promise<string> {
+    const bucket = BUCKETS.recording;
+    const { data, error } = await supabaseAdmin.storage
+      .from(bucket)
+      .createSignedUrl(storagePath, expiresInSeconds);
+
+    if (error || !data?.signedUrl) {
+      throw {
+        status: 502,
+        message: error?.message || "Failed to create recording playback URL",
+        code: "RECORDING_DOWNLOAD_URL_FAILED",
+      };
+    }
+
+    return data.signedUrl;
   }
 }

@@ -17,9 +17,10 @@ medicalRouter.get(
 medicalRouter.get(
   "/documents/:documentId",
   requireAuth,
-  authorizeRoles("patient", "admin"),
+  authorizeRoles("patient", "provider", "organization", "admin"),
   MedicalController.getDocument,
 );
+
 medicalRouter.post(
   "/documents",
   requireAuth,
