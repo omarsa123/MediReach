@@ -32,6 +32,39 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/** Find a Supabase Auth user by email (scans up to a few pages). */
+async function findAuthUserByEmail(
+  email: string,
+): Promise<{ id: string; email?: string } | null> {
+  const target = normalizeEmail(email);
+  for (let page = 1; page <= 5; page++) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+      page,
+      perPage: 200,
+    });
+    if (error || !data?.users?.length) break;
+    const found = data.users.find(
+      (u) => normalizeEmail(u.email || "") === target,
+    );
+    if (found) return { id: found.id, email: found.email ?? undefined };
+    if (data.users.length < 200) break;
+  }
+  return null;
+}
+
+/**
+ * If the email exists in Supabase Auth but NOT in the local User table,
+ * delete the orphan so registration can proceed.
+ * Returns true if an orphan was removed.
+ */
+async function removeAuthOrphanIfNeeded(email: string): Promise<boolean> {
+  if (await UserModel.isEmailTaken(email)) return false;
+  const authUser = await findAuthUserByEmail(email);
+  if (!authUser) return false;
+  await supabaseAdmin.auth.admin.deleteUser(authUser.id);
+  return true;
+}
+
 async function uploadProfileImage(
   image: unknown,
   userId: string,
@@ -108,7 +141,10 @@ function isUnverified(status: string): boolean {
 }
 
 export class AuthService {
-  static async register(body: any) {
+  static async register(
+    body: any,
+    options?: { skipEmailVerification?: boolean },
+  ) {
     body.email = normalizeEmail(String(body.email || ""));
     let role = body.role || "patient";
     if (role === "doctor") role = "provider";
@@ -178,6 +214,15 @@ export class AuthService {
       };
     }
 
+    const isProvider = role === "provider";
+    if (isProvider && !body.profileImageBase64) {
+      throw {
+        status: 400,
+        message: "A profile photo is required for provider accounts",
+        code: "PROFILE_IMAGE_REQUIRED",
+      };
+    }
+
     let authData: any = null;
     let authError: any = null;
     try {
@@ -223,15 +268,7 @@ export class AuthService {
     }
 
     const userId = authData.user.id;
-    const isProvider = role === "provider";
-    if (isProvider && !body.profileImageBase64) {
-      await supabaseAdmin.auth.admin.deleteUser(userId);
-      throw {
-        status: 400,
-        message: "A profile photo is required for provider accounts",
-        code: "PROFILE_IMAGE_REQUIRED",
-      };
-    }
+
     let profilePictureUrl: string | null = null;
     let licenseDocumentUrl: string | null = body.licenseDocumentUrl || null;
     try {
@@ -239,23 +276,44 @@ export class AuthService {
         body.profileImageBase64,
         userId,
       );
-      if (role === "organization" && !licenseDocumentUrl && body.licenseDocumentBase64) {
+      if (
+        role === "organization" &&
+        !licenseDocumentUrl &&
+        body.licenseDocumentBase64
+      ) {
         licenseDocumentUrl = await StorageService.uploadOrganizationLicense(
           body.licenseDocumentBase64,
           userId,
         );
       }
     } catch (imageError) {
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      try {
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+      } catch (_) {}
       throw imageError;
     }
+
     const passwordHash = await bcrypt.hash(body.password, 10);
+
+    // Strip base64 / password so createFromAuth does not re-upload or re-hash
+    const {
+      profileImageBase64: _img,
+      licenseDocumentBase64: _lic,
+      password: _pw,
+      ...safeBody
+    } = body;
 
     let publicUser;
     try {
       publicUser = await UserModel.createFromAuth(
         userId,
-        { ...body, role, username, profilePictureUrl, licenseDocumentUrl },
+        {
+          ...safeBody,
+          role,
+          username,
+          profilePictureUrl,
+          licenseDocumentUrl,
+        },
         passwordHash,
       );
     } catch (dbError) {
@@ -272,20 +330,22 @@ export class AuthService {
       throw dbError;
     }
 
-    const otp = await OtpService.issue("verify", body.email);
+    if (!options?.skipEmailVerification) {
+      const otp = await OtpService.issue("verify", body.email);
 
-    try {
-      await EmailService.sendVerificationEmail(body.email, otp);
-    } catch (emailErr: any) {
-      console.error(
-        "[Register] Failed to send verification email:",
-        emailErr?.message,
-      );
+      try {
+        await EmailService.sendVerificationEmail(body.email, otp);
+      } catch (emailErr: any) {
+        console.error(
+          "[Register] Failed to send verification email:",
+          emailErr?.message,
+        );
+      }
     }
 
     return {
       user: toPublicUser(publicUser),
-      needsVerification: true,
+      needsVerification: !options?.skipEmailVerification,
       email: body.email,
     };
   }
@@ -321,6 +381,18 @@ export class AuthService {
 
     const status = normalizeStatus(publicUser.status);
     const role = (publicUser.role || "").toString().toLowerCase();
+
+    if (!isLoginAllowed(status)) {
+      const hasPendingOtp = await OtpService.hasPendingVerification(email);
+      if (hasPendingOtp) {
+        throw {
+          status: 403,
+          message: "Please verify your email before signing in.",
+          code: "EMAIL_NOT_VERIFIED",
+          data: { email: publicUser.email },
+        };
+      }
+    }
 
     if (isAwaitingApproval(status, role)) {
       throw {
@@ -565,7 +637,10 @@ export class AuthService {
     const user = await UserModel.findByEmail(email);
     if (!user) return true;
 
-    if (normalizeStatus(user.status) === "active") {
+    if (
+      normalizeStatus(user.status) === "active" ||
+      !(await OtpService.hasPendingVerification(email))
+    ) {
       return { message: "This email is already verified." };
     }
 
@@ -610,15 +685,9 @@ export class AuthService {
 
     if (!authUserId) {
       try {
-        const { data } = await supabaseAdmin.auth.admin.listUsers({
-          page: 1,
-          perPage: 1000,
-        });
-        const found = data?.users?.find(
-          (u) => normalizeEmail(u.email || "") === email,
-        );
+        const found = await findAuthUserByEmail(email);
         if (found) authUserId = found.id;
-      } catch (e: any) {}
+      } catch (_) {}
     }
 
     if (authUserId) {
@@ -718,15 +787,23 @@ export class AuthService {
   }
 
   static async cleanOrphanUsers() {
-    const { data: supData, error } = await supabaseAdmin.auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
-    if (error || !supData?.users) {
-      throw {
-        status: 500,
-        message: error?.message || "Failed to fetch Supabase users",
-      };
+    const allAuthUsers: { id: string; email?: string }[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+        page,
+        perPage: 200,
+      });
+      if (error) {
+        throw {
+          status: 500,
+          message: error.message || "Failed to fetch Supabase users",
+        };
+      }
+      if (!data?.users?.length) break;
+      for (const u of data.users) {
+        allAuthUsers.push({ id: u.id, email: u.email ?? undefined });
+      }
+      if (data.users.length < 200) break;
     }
 
     const client = await pool.connect();
@@ -746,21 +823,29 @@ export class AuthService {
     }
 
     const deletedFromAuth: string[] = [];
-    for (const supUser of supData.users) {
+    for (const supUser of allAuthUsers) {
       const email = normalizeEmail(supUser.email || "");
       const existsLocally =
         localIds.has(supUser.id) || (email && localEmails.has(email));
       if (!existsLocally) {
-        await supabaseAdmin.auth.admin.deleteUser(supUser.id);
-        deletedFromAuth.push(email || supUser.id);
+        try {
+          await supabaseAdmin.auth.admin.deleteUser(supUser.id);
+          deletedFromAuth.push(email || supUser.id);
+        } catch (_) {}
       }
     }
 
-    const { data: supData2 } = await supabaseAdmin.auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
-    const remainingAuthIds = new Set((supData2?.users || []).map((u) => u.id));
+    // Re-fetch remaining Auth users after deletes for accuracy
+    const remainingIds = new Set<string>();
+    for (let page = 1; page <= 10; page++) {
+      const { data } = await supabaseAdmin.auth.admin.listUsers({
+        page,
+        perPage: 200,
+      });
+      if (!data?.users?.length) break;
+      for (const u of data.users) remainingIds.add(u.id);
+      if (data.users.length < 200) break;
+    }
 
     const client2 = await pool.connect();
     const deletedFromLocal: string[] = [];
@@ -769,27 +854,30 @@ export class AuthService {
         `SELECT "userId", "email" FROM public."User"`,
       );
       for (const row of res.rows) {
-        if (!remainingAuthIds.has(row.userId)) {
-          await client2.query(
-            `DELETE FROM public."Patient" WHERE "userId" = $1`,
-            [row.userId],
-          );
-          await client2.query(
-            `DELETE FROM public."Provider" WHERE "userId" = $1`,
-            [row.userId],
-          );
-          await client2.query(
-            `DELETE FROM public."Organization" WHERE "userId" = $1`,
-            [row.userId],
-          );
-          await client2.query(
-            `DELETE FROM public."Admin" WHERE "userId" = $1`,
-            [row.userId],
-          );
-          await client2.query(`DELETE FROM public."User" WHERE "userId" = $1`, [
-            row.userId,
-          ]);
-          deletedFromLocal.push(row.email || row.userId);
+        if (!remainingIds.has(row.userId)) {
+          try {
+            await client2.query(
+              `DELETE FROM public."Patient" WHERE "userId" = $1`,
+              [row.userId],
+            );
+            await client2.query(
+              `DELETE FROM public."Provider" WHERE "userId" = $1`,
+              [row.userId],
+            );
+            await client2.query(
+              `DELETE FROM public."Organization" WHERE "userId" = $1`,
+              [row.userId],
+            );
+            await client2.query(
+              `DELETE FROM public."Admin" WHERE "userId" = $1`,
+              [row.userId],
+            );
+            await client2.query(
+              `DELETE FROM public."User" WHERE "userId" = $1`,
+              [row.userId],
+            );
+            deletedFromLocal.push(row.email || row.userId);
+          } catch (_) {}
         }
       }
     } finally {

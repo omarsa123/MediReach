@@ -41,6 +41,7 @@ adminRouter.patch(
 
 adminRouter.get("/users", AdminController.listUsers);
 adminRouter.patch("/users/:userId/status", AdminController.updateUserStatus);
+adminRouter.post("/register", AdminController.registerAccount);
 
 adminRouter.post("/hard-delete", AdminController.hardDeleteUser);
 export { adminRouter };

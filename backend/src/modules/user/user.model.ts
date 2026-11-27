@@ -49,14 +49,12 @@ export interface UpdateProfileInput {
 export class UserModel {
   static async createFromAuth(
     userId: string,
-    data: RegisterInput & { profileImageBase64?: string }, // لو الـ RegisterInput مش مشمول فيها
+    data: RegisterInput & { profileImageBase64?: string },
     explicitPasswordHash?: string,
   ) {
+    // Prefer an already-uploaded URL; only upload from base64 if none was provided
     let profilePictureUrl = data.profilePictureUrl || null;
-
-    // التحقق من وجود صورة مرفوعة كـ Base64 (سواء للمريض أو المزود)
-    if (data.profileImageBase64) {
-      // رفع الصورة باستخدام الخدمة المستقلة وحفظ الرابط الناتج
+    if (!profilePictureUrl && data.profileImageBase64) {
       profilePictureUrl = await StorageService.uploadProfileImage(
         data.profileImageBase64,
         userId,

@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { LayoutDashboard, ShieldCheck, Users, Building2, Stethoscope, LogOut } from 'lucide-react';
+import { LayoutDashboard, ShieldCheck, Users, Building2, Stethoscope, UserPlus, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { clearSession } from '../../../services/authService';
-import { getAdminStats } from '../../../services/adminService';
-import Overview from './Overview';
-import UsersPage from './Users';
-import Organizations from './Organizations';
-import Verifications from './Verifications';
-import Providers from './Providers';
-import './AdminDashboard.css';
+import { useAuth } from '../../hooks/useAuth';
+import { getAdminStats } from '../../services/adminService';
+import Overview from '../../features/admin/Overview';
+import UsersPage from '../../features/admin/Users';
+import Organizations from '../../features/admin/Organizations';
+import Verifications from '../../features/admin/Verifications';
+import Providers from '../../features/admin/Providers';
+import RegisterAccount from '../../features/admin/RegisterAccount';
+import '../../features/admin/AdminDashboard.css';
 
 const tabs = [
   ['overview', 'Overview', LayoutDashboard],
@@ -16,12 +17,14 @@ const tabs = [
   ['providers', 'Provider requests', Stethoscope],
   ['organizations', 'Organizations', Building2],
   ['users', 'Users', Users],
+  ['register', 'Register account', UserPlus],
 ];
-export default function AdminDashboard() {
-  const [tab, setTab] = useState('overview');
+export default function AdminDashboard({ initialTab = 'overview' }) {
+  const [tab, setTab] = useState(initialTab);
   const [stats, setStats] = useState({});
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const { logout: clearAuth } = useAuth();
   const refresh = async () => { try { setStats(await getAdminStats()); setError(''); } catch (e) { setError(e.message); } };
   useEffect(() => {
     let active = true;
@@ -30,7 +33,7 @@ export default function AdminDashboard() {
       .catch((e) => { if (active) setError(e.message); });
     return () => { active = false; };
   }, []);
-  const logout = () => { clearSession(); navigate('/login', { replace: true }); };
+  const logout = () => { clearAuth(); navigate('/login', { replace: true }); };
   return <div className="admin-layout">
     <aside className="admin-sidebar">
       <div className="sidebar-brand"><div className="brand-logo-mini"><ShieldCheck color="white" /></div><div><h2>MedReach</h2><p>ADMIN PORTAL</p></div></div>
@@ -46,6 +49,7 @@ export default function AdminDashboard() {
         {tab === 'organizations' && <Organizations />}
         {tab === 'verifications' && <Verifications onChanged={refresh} />}
         {tab === 'providers' && <Providers onChanged={refresh} />}
+        {tab === 'register' && <RegisterAccount onChanged={refresh} />}
       </div>
     </main>
   </div>;

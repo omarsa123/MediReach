@@ -2,11 +2,12 @@ import rateLimit from "express-rate-limit";
 
 // 1. Limiter صارم لمسارات الـ OTP وتغيير الباسوورد (5 محاولات كل 15 دقيقة)
 export const otpLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 دقيقة
-  max: 5, // أقصى عدد محاولات لكل IP
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   message: {
-    status: "fail",
+    success: false,
     message: "تم تجاوز الحد المسموح من المحاولات، يرجى المحاولة بعد 15 دقيقة.",
+    code: "RATE_LIMIT_OTP",
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -17,8 +18,9 @@ export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   message: {
-    status: "fail",
-    message: "محاولات تسجيل دخول كثيرة جداً، يرجى الانتظار قليلاً.",
+    success: false,
+    message: "محاولات كثيرة جداً، يرجى الانتظار قليلاً.",
+    code: "RATE_LIMIT_AUTH",
   },
   standardHeaders: true,
   legacyHeaders: false,

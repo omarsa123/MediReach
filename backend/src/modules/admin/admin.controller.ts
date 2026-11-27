@@ -235,6 +235,34 @@ export class AdminController {
       res.json(successResponse({ user }, "User status updated"));
     },
   );
+  static registerAccount = catchAsync(
+    async (req: Request, res: Response): Promise<void> => {
+      try {
+        const result = await AuthService.register(req.body || {}, {
+          skipEmailVerification: true,
+        });
+        res
+          .status(201)
+          .json(successResponse(result, "Account created successfully."));
+      } catch (err: any) {
+        const status = Number(err?.status ?? err?.statusCode);
+        const httpStatus =
+          Number.isInteger(status) && status >= 400 && status < 600
+            ? status
+            : 500;
+        res
+          .status(httpStatus)
+          .json(
+            errorResponse(
+              err?.message || "Registration failed",
+              err?.code || "REGISTER_FAILED",
+              err?.data,
+            ),
+          );
+      }
+    },
+  );
+
   static hardDeleteUser = catchAsync(
     async (req: Request, res: Response): Promise<void> => {
       const email = String(req.body?.email || req.query?.email || "").trim();

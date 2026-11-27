@@ -1,6 +1,32 @@
 import { pool } from "../../config/dbconfig.js";
 
+const VERIFIED_EMAIL_CONDITION = `NOT EXISTS (
+  SELECT 1 FROM public."AuthOtp" otp
+  WHERE otp."key" = 'verify_' || LOWER(u."email")
+)`;
+
 export class AdminModel {
+  private static async ensureEmailVerifiedForApproval(
+    client: any,
+    userId: string,
+  ) {
+    const unverified = await client.query(
+      `SELECT 1
+       FROM public."User" u
+       JOIN public."AuthOtp" otp ON otp."key" = 'verify_' || LOWER(u."email")
+       WHERE u."userId" = $1
+       LIMIT 1`,
+      [userId],
+    );
+    if (unverified.rows.length > 0) {
+      throw {
+        status: 400,
+        message: "Email must be verified via OTP before admin approval.",
+        code: "EMAIL_NOT_VERIFIED",
+      };
+    }
+  }
+
   static async listPendingProviders() {
     const result = await pool.query(
       `SELECT
@@ -19,6 +45,7 @@ export class AdminModel {
        FROM public."Provider" pr
        JOIN public."User" u ON u."userId" = pr."userId"
        WHERE pr."verificationStatus" = 'Pending'
+         AND ${VERIFIED_EMAIL_CONDITION}
        ORDER BY u."createdAt" ASC`,
     );
     return result.rows;
@@ -40,6 +67,9 @@ export class AdminModel {
       const allowed: Record<string, string[]> = { Pending: ["Approved", "Rejected"], Approved: ["Pending", "Rejected"], Rejected: ["Pending", "Approved"] };
       if (!(allowed[from] || []).includes(status)) {
         throw { status: 400, message: `Cannot change provider verification from ${from} to ${status}`, code: "INVALID_VERIFICATION_TRANSITION" };
+      }
+      if (status === "Approved") {
+        await this.ensureEmailVerifiedForApproval(client, providerId);
       }
       const result = await client.query(
         `UPDATE public."Provider" SET "verificationStatus" = $1 WHERE "userId" = $2 RETURNING *`,
@@ -72,6 +102,7 @@ export class AdminModel {
        FROM public."Organization" o
        JOIN public."User" u ON u."userId" = o."userId"
        WHERE o."verificationStatus" = 'Pending'
+         AND ${VERIFIED_EMAIL_CONDITION}
        ORDER BY o."createdAt" ASC`,
     );
     return result.rows;
@@ -93,6 +124,9 @@ export class AdminModel {
       const allowed: Record<string, string[]> = { Pending: ["Approved", "Rejected"], Approved: ["Pending", "Rejected"], Rejected: ["Pending", "Approved"] };
       if (!(allowed[from] || []).includes(status)) {
         throw { status: 400, message: `Cannot change organization verification from ${from} to ${status}`, code: "INVALID_VERIFICATION_TRANSITION" };
+      }
+      if (status === "Approved") {
+        await this.ensureEmailVerifiedForApproval(client, organizationId);
       }
       const result = await client.query(
         `UPDATE public."Organization" SET "verificationStatus" = $1 WHERE "userId" = $2 RETURNING *`,
@@ -217,8 +251,8 @@ export class AdminModel {
         (SELECT COUNT(*)::int FROM public."Organization" WHERE "organizerType" = 'PhysiotherapyCenter') AS "totalPhysio",
         (SELECT COUNT(*)::int FROM public."Appointment") AS "totalAppointments",
         (SELECT COUNT(*)::int FROM public."Appointment" WHERE "status" = 'Pending') AS "pendingAppointments",
-        (SELECT COUNT(*)::int FROM public."Provider" WHERE "verificationStatus" = 'Pending') AS "pendingProviders",
-        (SELECT COUNT(*)::int FROM public."Organization" WHERE "verificationStatus" = 'Pending') AS "pendingOrganizations"
+        (SELECT COUNT(*)::int FROM public."Provider" pr JOIN public."User" u ON u."userId" = pr."userId" WHERE pr."verificationStatus" = 'Pending' AND ${VERIFIED_EMAIL_CONDITION}) AS "pendingProviders",
+        (SELECT COUNT(*)::int FROM public."Organization" o JOIN public."User" u ON u."userId" = o."userId" WHERE o."verificationStatus" = 'Pending' AND ${VERIFIED_EMAIL_CONDITION}) AS "pendingOrganizations"
     `);
     return result.rows[0];
   }

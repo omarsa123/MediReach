@@ -1,13 +1,20 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
-import medreachLogo from './medreach.png';
-import { loginWithRole } from '../../services/authService';
+import { Mail, Lock, Eye, EyeOff, X } from 'lucide-react';
+import medreachLogo from '../../assets/medreach.png';
+import { useAuth } from '../../hooks/useAuth';
+import {
+  getSavedLoginEmails,
+  markEmailVerified,
+  removeSavedLoginEmail,
+  saveLoginEmail,
+} from '../../services/authService';
+import { isValidEmail } from '../../utils/validators';
 import './Auth.css';
 
 export default function Login() {
   const navigate = useNavigate();
-  const [role, setRole] = useState('organization');
+  const { login } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState({ type: '', message: '' });
@@ -16,52 +23,68 @@ export default function Login() {
   const [password, setPassword] = useState('');
 
   // States for Custom Email Autocomplete
-  const [savedEmails, setSavedEmails] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('medreach_saved_emails') || '[]'); } catch { return []; }
-  });
+  const [savedEmails, setSavedEmails] = useState(() => getSavedLoginEmails());
   const [showEmailList, setShowEmailList] = useState(false);
 
-  const handleRoleSwitch = (selectedRole) => {
-    if (role !== selectedRole) {
-      setRole(selectedRole);
-      setAlert({ type: '', message: '' });
-    }
-  };
+  const filteredEmails = savedEmails.filter((savedEmail) => {
+    const q = email.trim().toLowerCase();
+    return !q || String(savedEmail).toLowerCase().includes(q);
+  });
 
   const handleLoginSubmit = async (e) => {
-  e.preventDefault();
-  setAlert({ type: '', message: '' });
-  setLoading(true);
+    e.preventDefault();
+    setAlert({ type: '', message: '' });
+    setLoading(true);
 
-  try {
-    // الدالة بتستقبل object مش قيم منفصلة
-    const result = await loginWithRole({
-      email: email.trim(),
-      password,
-      expectedRole: role,
-    });
-
-    // حفظ الإيميل في القائمة المخصصة
     const normalizedEmail = email.trim();
-    if (normalizedEmail && !savedEmails.includes(normalizedEmail)) {
-      const updated = [normalizedEmail, ...savedEmails];
-      setSavedEmails(updated);
-      localStorage.setItem('medreach_saved_emails', JSON.stringify(updated));
+    if (isValidEmail(normalizedEmail)) {
+      setSavedEmails(saveLoginEmail(normalizedEmail));
     }
 
-    setAlert({ type: 'success', message: 'Login successful! Redirecting...' });
+    try {
+      const result = await login({
+        email: normalizedEmail,
+        password,
+        allowedRoles: ['admin', 'organization'],
+      });
 
-    // التوجيه حسب الـ role الفعلي الراجع من الباك
-    const actualRole = result?.user?.role;
-    setTimeout(() => {
-      navigate(actualRole === 'admin' ? '/admin-dashboard' : actualRole === 'organization' ? '/org-dashboard' : '/forbidden', { replace: true });
-    }, 1000);
-  } catch (error) {
-    setAlert({ type: 'error', message: error.message || 'Login failed.' });
-  } finally {
-    setLoading(false);
-  }
-};
+      const actualRole = String(result?.user?.role || '').toLowerCase();
+      if (actualRole !== 'admin' && actualRole !== 'organization') {
+        setAlert({
+          type: 'error',
+          message: 'Access denied. Only Admin and Organization accounts can log in here.',
+        });
+        return;
+      }
+
+      setAlert({ type: 'success', message: 'Login successful! Redirecting...' });
+
+      setTimeout(() => {
+        navigate(actualRole === 'admin' ? '/admin-dashboard' : '/org-dashboard', { replace: true });
+      }, 1000);
+    } catch (error) {
+      const targetEmail = error?.data?.email || normalizedEmail;
+      if (error?.code === 'EMAIL_NOT_VERIFIED' && targetEmail) {
+        setAlert({
+          type: 'error',
+          message: 'Please verify your email first. Redirecting to OTP verification...',
+        });
+        setTimeout(() => {
+          navigate('/verify-otp', {
+            state: { email: targetEmail, mode: 'verify', fromLogin: true },
+          });
+        }, 1000);
+        return;
+      }
+
+      if (error?.code === 'ACCOUNT_PENDING' && targetEmail) {
+        markEmailVerified(targetEmail);
+      }
+      setAlert({ type: 'error', message: error.message || 'Login failed.' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="auth-wrapper">
@@ -85,31 +108,9 @@ export default function Login() {
 
         {/* Right Panel */}
         <div className="form-panel">
-          
-          <div className="role-switch">
-            <button
-              type="button"
-              className={`role-btn ${role === 'organization' ? 'active' : ''}`}
-              onClick={() => handleRoleSwitch('organization')}
-            >
-              Organization
-            </button>
-            <button
-              type="button"
-              className={`role-btn ${role === 'admin' ? 'active' : ''}`}
-              onClick={() => handleRoleSwitch('admin')}
-            >
-              Admin
-            </button>
-          </div>
-
           <div className="form-header">
-            <h2>{role === 'admin' ? 'Admin Portal' : 'Welcome Back!'}</h2>
-            <p>
-              {role === 'admin'
-                ? 'Log in to MedReach administration dashboard'
-                : 'Log in to your MedReach organization account'}
-            </p>
+            <h2>Welcome Back!</h2>
+            <p>Log in to your MedReach account</p>
           </div>
 
           {alert.message && (
@@ -141,18 +142,30 @@ export default function Login() {
               />
               
               {/* القائمة المخصصة */}
-              {showEmailList && savedEmails.length > 0 && (
+              {showEmailList && filteredEmails.length > 0 && (
                 <ul className="custom-email-list">
-                  {savedEmails.map((savedEmail, idx) => (
+                  {filteredEmails.map((savedEmail) => (
                     <li
-                      key={idx}
+                      key={savedEmail}
                       className="custom-email-item"
                       onMouseDown={() => {
                         setEmail(savedEmail);
                         setShowEmailList(false);
                       }}
                     >
-                      {savedEmail}
+                      <span>{savedEmail}</span>
+                      <button
+                        type="button"
+                        className="custom-email-remove"
+                        aria-label={`Remove ${savedEmail}`}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setSavedEmails(removeSavedLoginEmail(savedEmail));
+                        }}
+                      >
+                        <X size={14} />
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -190,11 +203,11 @@ export default function Login() {
             </div>
 
             <button type="submit" className="primary-btn" disabled={loading}>
-              <span>{loading ? 'Logging in...' : role === 'admin' ? 'Log In as Admin' : 'Log In'}</span>
+              <span>{loading ? 'Logging in...' : 'Log In'}</span>
             </button>
           </form>
 
-          <div className={`register-footer ${role === 'admin' ? 'invisible' : ''}`}>
+          <div className="register-footer">
             <p>
               Don't have an account?
               <Link to="/signup" className="register-link-btn">

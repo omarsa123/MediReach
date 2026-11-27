@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Ban, Search, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getUsersPage, toggleUserStatus } from '../../../services/adminService';
+import { getUsersPage, toggleUserStatus } from '../../services/adminService';
 export default function Users() {
   const [users,setUsers]=useState([]); const [pagination,setPagination]=useState(null); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
   const [page,setPage]=useState(1); const [status,setStatus]=useState(''); const [role,setRole]=useState(''); const [search,setSearch]=useState(''); const [searchTerm,setSearchTerm]=useState('');

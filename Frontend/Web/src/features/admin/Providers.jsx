@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle, XCircle } from 'lucide-react';
-import { getPendingProviders, verifyProviderStatus } from '../../../services/adminService';
+import { getPendingProviders, verifyProviderStatus } from '../../services/adminService';
 export default function Providers({ onChanged }) {
   const [items, setItems] = useState([]); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
   const load = async () => { setLoading(true); try { setItems(await getPendingProviders()); setError(''); } catch (e) { setError(e.message); } finally { setLoading(false); } };

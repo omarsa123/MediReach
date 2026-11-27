@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getAllOrganizations } from '../../../services/adminService';
+import { getAllOrganizations } from '../../services/adminService';
 
 export default function Organizations() {
   const [orgs, setOrgs] = useState([]);

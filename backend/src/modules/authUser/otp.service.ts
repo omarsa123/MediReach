@@ -41,11 +41,21 @@ export class OtpService {
     );
 
     if (!result.rows.length) {
-      await this.clear(key);
+      if (!key.startsWith("verify_")) {
+        await this.clear(key);
+      }
       return null;
     }
 
     return String(result.rows[0].code);
+  }
+
+  static async hasPendingVerification(email: string): Promise<boolean> {
+    const result = await pool.query(
+      `SELECT 1 FROM public."AuthOtp" WHERE "key" = $1 LIMIT 1`,
+      [`verify_${email.trim().toLowerCase()}`],
+    );
+    return result.rows.length > 0;
   }
 
   static async verify(

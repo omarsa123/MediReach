@@ -1,11 +1,18 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Building2, User, Mail, Phone, Lock, 
   Stethoscope, MapPin, Eye, EyeOff, FileUp 
 } from 'lucide-react';
-import medreachLogo from './medreach.png';
-import { signUpOrganization } from '../../services/authService';
+import medreachLogo from '../../assets/medreach.png';
+import { markEmailUnverified, saveLoginEmail, signUpOrganization } from '../../services/authService';
+import { useAddressSuggestions } from '../../hooks/useAddressSuggestions';
+import {
+  isStrongPassword,
+  isValidEgyptianPhone,
+  isValidEmail,
+  isValidUsername,
+} from '../../utils/validators';
 import './Auth.css';
 
 export default function SignUp() {
@@ -19,10 +26,9 @@ export default function SignUp() {
   const [organizerType, setOrganizerType] = useState('Clinic');
   
   const [address, setAddress] = useState('');
-  const [addressSuggestions, setAddressSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
-  const searchTimeoutRef = useRef(null);
+  const { suggestions: addressSuggestions, isSearching: isSearchingAddress } =
+    useAddressSuggestions(address, { enabled: showSuggestions });
 
   const [specialization, setSpecialization] = useState('');
   const [offersAmbulanceService, setOffersAmbulanceService] = useState(false);
@@ -34,46 +40,9 @@ export default function SignUp() {
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState({ type: '', message: '' });
 
-  const fetchAddressSuggestions = (query) => {
-    setAddress(query); 
-    if (query.trim().length < 2) {
-      setAddressSuggestions([]);
-      setShowSuggestions(false);
-      setIsSearchingAddress(false);
-      return;
-    }
-
-    setShowSuggestions(true);
-    setIsSearchingAddress(true);
-
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-
-    searchTimeoutRef.current = setTimeout(async () => {
-      try {
-        const searchQuery = encodeURIComponent(query.trim() + ' مصر');
-        const response = await fetch(`https://photon.komoot.io/api/?q=${searchQuery}&limit=5`);
-        const data = await response.json();
-        
-        if (data && data.features && data.features.length > 0) {
-          const suggestions = data.features.map(feature => {
-            const props = feature.properties;
-            const addressParts = [props.name, props.district, props.city || props.town, props.state].filter(Boolean);
-            const uniqueParts = [...new Set(addressParts)];
-            return {
-              place_id: props.osm_id || Math.random(),
-              display_name: uniqueParts.join('، ') + '، مصر'
-            };
-          });
-          setAddressSuggestions(suggestions);
-        } else {
-          setAddressSuggestions([]);
-        }
-      } catch {
-        setAddressSuggestions([]);
-      } finally {
-        setIsSearchingAddress(false);
-      }
-    }, 600); 
+  const handleAddressChange = (query) => {
+    setAddress(query);
+    setShowSuggestions(query.trim().length >= 2);
   };
 
   const fileToDataUrl = (file) => new Promise((resolve, reject) => {
@@ -87,26 +56,22 @@ export default function SignUp() {
     e.preventDefault();
     setAlert({ type: '', message: '' });
 
-    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
-    if (!usernameRegex.test(username.trim())) {
+    if (!isValidUsername(username)) {
       setAlert({ type: 'error', message: 'Username must be 3-20 characters (letters, numbers, underscores).' });
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
+    if (!isValidEmail(email)) {
       setAlert({ type: 'error', message: 'Please enter a valid email address.' });
       return;
     }
 
-    const phoneRegex = /^01[0125][0-9]{8}$/;
-    if (!phoneRegex.test(phone.trim())) {
+    if (!isValidEgyptianPhone(phone)) {
       setAlert({ type: 'error', message: 'Please enter a valid Egyptian phone number (e.g., 01012345678).' });
       return;
     }
 
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[\W_]).{6,}$/;
-    if (!passwordRegex.test(password)) {
+    if (!isStrongPassword(password)) {
       setAlert({ type: 'error', message: 'Password must be at least 6 characters, include upper/lower case and special character.' });
       return;
     }
@@ -143,8 +108,10 @@ export default function SignUp() {
         offersHomeService: organizerType === 'PhysiotherapyCenter' ? offersHomeService : false,
       });
 
+      markEmailUnverified(email.trim());
+      saveLoginEmail(email.trim());
       setAlert({ type: 'success', message: 'Organization registered successfully! Check your email for the OTP.' });
-      setTimeout(() => navigate('/verify-otp', { state: { email: email.trim() } }), 2000);
+      setTimeout(() => navigate('/verify-otp', { state: { email: email.trim(), mode: 'verify' } }), 2000);
 
     } catch (error) {
       let errorMessage = error.message || 'Failed to register. Please try again.';
@@ -244,7 +211,7 @@ export default function SignUp() {
                   type="text"
                   placeholder="Full Address (e.g., Nasr City, Cairo)"
                   value={address}
-                  onChange={(e) => fetchAddressSuggestions(e.target.value)}
+                  onChange={(e) => handleAddressChange(e.target.value)}
                   onFocus={() => { if (address.length >= 2) setShowSuggestions(true); }}
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 250)}
                   required

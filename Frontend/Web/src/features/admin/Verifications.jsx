@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle } from 'lucide-react';
-import { getPendingOrganizations, verifyOrganizationStatus } from '../../../services/adminService';
+import { getPendingOrganizations, verifyOrganizationStatus } from '../../services/adminService';
 
 export default function Verifications({ onChanged }) {
   const [pendingOrgs, setPendingOrgs] = useState([]);

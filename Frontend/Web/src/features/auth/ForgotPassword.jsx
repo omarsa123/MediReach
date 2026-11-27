@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, ArrowLeft } from 'lucide-react';
-import medreachLogo from './medreach.png';
+import medreachLogo from '../../assets/medreach.png';
 import { sendPasswordResetEmail } from '../../services/authService';
 import './Auth.css';
 
@@ -24,10 +24,10 @@ export default function ForgotPassword() {
         message: 'OTP has been sent to your email.',
       });
       
-      // التوجيه مع تمرير الإيميل كـ State
+      // التوجيه لصفحة إدخال الـ OTP مع تمرير الإيميل والوضع
       setTimeout(() => {
-        navigate('/reset-password', { state: { email: email.trim() } });
-      }, 2000);
+        navigate('/verify-otp', { state: { email: email.trim(), mode: 'reset' } });
+      }, 1500);
       
     } catch (error) {
       setAlert({
@@ -56,7 +56,7 @@ export default function ForgotPassword() {
         <div className="form-panel">
           <div className="form-header">
             <h2>Forgot Password</h2>
-            <p>Enter your email to receive a password reset link.</p>
+            <p>Enter your email to receive a password reset OTP.</p>
           </div>
 
           {alert.message && (
@@ -80,7 +80,7 @@ export default function ForgotPassword() {
             </div>
 
             <button type="submit" className="primary-btn" disabled={loading} style={{ marginTop: '20px' }}>
-              <span>{loading ? 'Sending...' : 'Send Reset Link'}</span>
+              <span>{loading ? 'Sending...' : 'Send Reset OTP'}</span>
             </button>
           </form>
 
