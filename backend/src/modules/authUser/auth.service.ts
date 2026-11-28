@@ -152,34 +152,106 @@ export class AuthService {
 
     // Public signup must never be able to create administrator accounts.
     if (!["patient", "provider", "organization"].includes(role)) {
-      throw { status: 400, message: "Unsupported registration role", code: "INVALID_ROLE" };
+      throw {
+        status: 400,
+        message: "Unsupported registration role",
+        code: "INVALID_ROLE",
+      };
     }
     if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
       throw { status: 400, message: "name is required", code: "NAME_REQUIRED" };
     }
     if (!body.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
-      throw { status: 400, message: "A valid email is required", code: "INVALID_EMAIL" };
+      throw {
+        status: 400,
+        message: "A valid email is required",
+        code: "INVALID_EMAIL",
+      };
     }
     if (!body.phone || typeof body.phone !== "string" || !body.phone.trim()) {
-      throw { status: 400, message: "phone is required", code: "PHONE_REQUIRED" };
+      throw {
+        status: 400,
+        message: "phone is required",
+        code: "PHONE_REQUIRED",
+      };
     }
     if (role === "provider" && !body.licenseNumber) {
-      throw { status: 400, message: "licenseNumber is required for provider registration", code: "LICENSE_REQUIRED" };
+      throw {
+        status: 400,
+        message: "licenseNumber is required for provider registration",
+        code: "LICENSE_REQUIRED",
+      };
     }
-    if (role === "organization" && !body.licenseDocumentUrl && !body.licenseDocumentBase64) {
-      throw { status: 400, message: "licenseDocumentUrl or licenseDocumentBase64 is required for organization registration", code: "LICENSE_DOCUMENT_REQUIRED" };
+    if (
+      role === "organization" &&
+      !body.licenseDocumentUrl &&
+      !body.licenseDocumentBase64
+    ) {
+      throw {
+        status: 400,
+        message:
+          "licenseDocumentUrl or licenseDocumentBase64 is required for organization registration",
+        code: "LICENSE_DOCUMENT_REQUIRED",
+      };
     }
-    if (role === "provider" && body.providerType && !["Doctor", "Nurse", "Physiotherapist", "LabSpecialist"].includes(body.providerType)) {
-      throw { status: 400, message: "providerType must be Doctor, Nurse, Physiotherapist, or LabSpecialist", code: "INVALID_PROVIDER_TYPE" };
+    if (
+      role === "provider" &&
+      body.providerType &&
+      !["Doctor", "Nurse", "Physiotherapist", "LabSpecialist"].includes(
+        body.providerType,
+      )
+    ) {
+      throw {
+        status: 400,
+        message:
+          "providerType must be Doctor, Nurse, Physiotherapist, or LabSpecialist",
+        code: "INVALID_PROVIDER_TYPE",
+      };
     }
-    if (role === "organization" && body.organizerType && !["Clinic", "Hospital", "Lab", "PhysiotherapyCenter"].includes(body.organizerType)) {
-      throw { status: 400, message: "Invalid organizerType", code: "INVALID_ORGANIZATION_TYPE" };
+    if (
+      role === "organization" &&
+      body.organizerType &&
+      !["Clinic", "Hospital", "Lab", "PhysiotherapyCenter"].includes(
+        body.organizerType,
+      )
+    ) {
+      throw {
+        status: 400,
+        message: "Invalid organizerType",
+        code: "INVALID_ORGANIZATION_TYPE",
+      };
     }
-    if (role === "patient" && body.gender && !["Female", "Male", "Other", "PreferNotToSay"].includes(body.gender)) {
-      throw { status: 400, message: "Invalid gender value", code: "INVALID_GENDER" };
+    if (
+      role === "patient" &&
+      body.gender &&
+      !["Female", "Male", "Other", "PreferNotToSay"].includes(body.gender)
+    ) {
+      throw {
+        status: 400,
+        message: "Invalid gender value",
+        code: "INVALID_GENDER",
+      };
     }
-    if (role === "patient" && body.bloodType && !["A_Positive", "A_Negative", "B_Positive", "B_Negative", "AB_Positive", "AB_Negative", "O_Positive", "O_Negative", "Unknown"].includes(body.bloodType)) {
-      throw { status: 400, message: "Invalid bloodType value", code: "INVALID_BLOOD_TYPE" };
+    if (
+      role === "patient" &&
+      body.bloodType &&
+      ![
+        "A_Positive",
+        "A_Negative",
+        "B_Positive",
+        "B_Negative",
+        "AB_Positive",
+        "AB_Negative",
+        "O_Positive",
+        "O_Negative",
+        "Unknown",
+      ].includes(body.bloodType)
+    ) {
+      throw {
+        status: 400,
+        message: "Invalid bloodType value",
+        code: "INVALID_BLOOD_TYPE",
+      };
     }
 
     let username = body.username;
@@ -223,51 +295,44 @@ export class AuthService {
       };
     }
 
-    let authData: any = null;
-    let authError: any = null;
-    try {
-      const createPromise = supabaseAdmin.auth.admin.createUser({
-        email: body.email,
-        password: body.password,
-        email_confirm: true,
-        user_metadata: { name: body.name, username, phone: body.phone, role },
-      });
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Supabase createUser timed out after 12s")),
-          12000,
-        ),
-      );
-      const result: any = await Promise.race([createPromise, timeoutPromise]);
-      authData = result.data;
-      authError = result.error;
-    } catch (timeoutOrNetErr: any) {
-      throw {
-        status: 504,
-        message:
-          timeoutOrNetErr?.message ||
-          "Authentication service timeout. Check credentials.",
-        code: "AUTH_TIMEOUT",
-      };
-    }
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      email: body.email,
+      password: body.password,
+      email_confirm: false,
+      user_metadata: {
+        name: body.name,
+        username,
+        phone: body.phone,
+        role,
+      },
+    });
 
-    if (authError || !authData?.user) {
-      const msg = authError?.message || "Failed to create auth user";
+    if (error || !data?.user) {
+      console.error("[Register] Supabase Auth error:", {
+        message: error?.message,
+        code: error?.code,
+        status: error?.status,
+      });
+
       if (
-        msg.toLowerCase().includes("already") ||
-        msg.toLowerCase().includes("registered")
+        error?.code === "email_exists" ||
+        error?.code === "user_already_exists"
       ) {
         throw {
           status: 409,
-          message:
-            "This email still exists in authentication. Run hard-delete first.",
+          message: "An authentication account already exists for this email.",
           code: "AUTH_EMAIL_EXISTS",
         };
       }
-      throw { status: 400, message: msg, code: "AUTH_CREATE_FAILED" };
+
+      throw {
+        status: 502,
+        message: error?.message || "Failed to create authentication account",
+        code: "AUTH_CREATE_FAILED",
+      };
     }
 
-    const userId = authData.user.id;
+    const userId = data.user.id;
 
     let profilePictureUrl: string | null = null;
     let licenseDocumentUrl: string | null = body.licenseDocumentUrl || null;
@@ -598,9 +663,29 @@ export class AuthService {
       throw { status: 404, message: "User not found", code: "NOT_FOUND" };
     }
 
+    // تأكيد البريد في Supabase Auth
+    const { error: confirmError } =
+      await supabaseAdmin.auth.admin.updateUserById(user.userId, {
+        email_confirm: true,
+      });
+
+    if (confirmError) {
+      console.error("[Verify OTP] Supabase confirmation failed:", {
+        message: confirmError.message,
+        code: confirmError.code,
+      });
+
+      throw {
+        status: 502,
+        message: "Failed to confirm email with authentication service",
+        code: "AUTH_EMAIL_CONFIRM_FAILED",
+      };
+    }
+
     const fullUser = await UserModel.findById(user.userId);
     const role = (fullUser?.role || "patient").toString().toLowerCase();
 
+    // Patient يصبح Active فقط، بينما Provider و Organization يظلان بانتظار الموافقة
     if (role === "patient" || !fullUser?.role) {
       const client = await pool.connect();
       try {
@@ -613,7 +698,9 @@ export class AuthService {
       }
     }
 
+    // حذف الكود بعد نجاح التأكيد وتحديث قاعدة البيانات
     await OtpService.clear(`verify_${email}`);
+
     const updatedUser = await UserModel.findById(user.userId);
     const tokens = generateLocalTokens(updatedUser.userId, updatedUser.email);
 
@@ -623,7 +710,6 @@ export class AuthService {
       verified: true,
     };
   }
-
   static async resendVerification(email: string) {
     email = normalizeEmail(email || "");
     if (!email) {

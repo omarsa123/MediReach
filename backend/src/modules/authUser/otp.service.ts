@@ -51,13 +51,21 @@ export class OtpService {
   }
 
   static async hasPendingVerification(email: string): Promise<boolean> {
-    const result = await pool.query(
-      `SELECT 1 FROM public."AuthOtp" WHERE "key" = $1 LIMIT 1`,
-      [`verify_${email.trim().toLowerCase()}`],
-    );
-    return result.rows.length > 0;
+    const client = await pool.connect();
+    try {
+      const res = await client.query(
+        `SELECT 1
+         FROM public."AuthOtp"
+         WHERE "key" = $1
+           AND "expiresAt" > NOW()
+         LIMIT 1`,
+        [`verify_${normalizeEmail(email)}`],
+      );
+      return (res.rowCount ?? 0) > 0;
+    } finally {
+      client.release();
+    }
   }
-
   static async verify(
     prefix: "verify" | "reset",
     email: string,
@@ -77,4 +85,7 @@ export class OtpService {
   static async clear(key: string): Promise<void> {
     await pool.query(`DELETE FROM public."AuthOtp" WHERE "key" = $1`, [key]);
   }
+}
+function normalizeEmail(email: string): string {
+  return (email || "").trim().toLowerCase();
 }

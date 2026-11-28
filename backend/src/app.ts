@@ -26,6 +26,9 @@ import { adminRouter } from "./modules/admin/admin.routes.js";
 dotenv.config();
 
 const app = express();
+
+// أضف هذا السطر لحل مشكلة الـ rate-limit و الـ X-Forwarded-For
+app.set("trust proxy", 1);
 const PORT = Number(process.env.PORT) || 3000;
 
 // ---------- Global middleware ----------

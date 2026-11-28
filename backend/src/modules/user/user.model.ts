@@ -282,10 +282,26 @@ export class UserModel {
 
   static async isEmailTaken(email: string): Promise<boolean> {
     const res = await pool.query(
-      `SELECT 1 FROM public."User" WHERE "email" = $1 LIMIT 1`,
-      [email],
+      `SELECT 1
+       FROM public."User"
+       WHERE LOWER(TRIM("email")) = $1
+       LIMIT 1`,
+      [email.trim().toLowerCase()],
     );
     return res.rows.length > 0;
+  }
+
+  static async findByEmail(email: string) {
+    const result = await pool.query(
+      `SELECT
+         "userId", "name", "username", "email", "phone", "passwordHash",
+         "address", "profilePictureUrl", "createdAt", "status"
+       FROM public."User"
+       WHERE LOWER(TRIM("email")) = $1`,
+      [email.trim().toLowerCase()],
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0];
   }
 
   static async isPhoneTaken(
@@ -298,19 +314,6 @@ export class UserModel {
     const params = excludeUserId ? [phone, excludeUserId] : [phone];
     const res = await pool.query(query, params);
     return res.rows.length > 0;
-  }
-
-  static async findByEmail(email: string) {
-    const result = await pool.query(
-      `SELECT
-         "userId", "name", "username", "email", "phone", "passwordHash",
-         "address", "profilePictureUrl", "createdAt", "status"
-       FROM public."User"
-       WHERE "email" = $1`,
-      [email],
-    );
-    if (result.rows.length === 0) return null;
-    return result.rows[0];
   }
 
   static async updatePasswordHash(

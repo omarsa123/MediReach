@@ -17,6 +17,8 @@ if (!supabaseServiceRoleKey) {
   throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY in environment variables");
 }
 
+console.log("[Supabase Project]", new URL(supabaseUrl).host);
+
 /**
  * Client used for regular user operations (signup, login, password reset).
  * Uses the anon key + respects RLS.
