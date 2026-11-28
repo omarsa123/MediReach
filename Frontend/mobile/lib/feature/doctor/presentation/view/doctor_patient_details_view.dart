@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:medireach/feature/doctor/widgets/screen_header.dart';
+import '../../../../feature/doctor/widgets/screen_header.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../data/models/patient_details_model.dart';
 import '../../widgets/detail_info_row.dart';

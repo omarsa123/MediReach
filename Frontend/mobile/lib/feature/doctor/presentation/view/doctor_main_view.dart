@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:medireach/feature/doctor/data/models/appointment_model.dart';
-import 'package:medireach/feature/doctor/data/models/patient_details_model.dart';
-import 'package:medireach/feature/doctor/presentation/view/doctor_patient_details_view.dart';
+import '../../../../feature/doctor/data/models/appointment_model.dart';
+import '../../../../feature/doctor/data/models/patient_details_model.dart';
+import '../../../../feature/doctor/presentation/view/doctor_patient_details_view.dart';
 import '../../widgets/doctor_buttom_nav.dart';
 import 'doctor_appointments_view.dart';
 import 'doctor_dashboard_view.dart';
